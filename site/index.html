@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' blob:; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self';"
+    />
+    <title>Tableau Workbook Explorer</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="toolbar-left">
+        <button id="open-workbook-btn" type="button">Open Workbook</button>
+        <button id="fit-btn" type="button">Fit</button>
+        <button id="layout-btn" type="button">Auto layout</button>
+        <button id="expand-1-btn" type="button">Expand 1-hop</button>
+        <button id="expand-2-btn" type="button">Expand 2-hop</button>
+        <button id="hide-isolated-btn" type="button">Hide isolated</button>
+        <details class="dropdown" id="filters-dropdown">
+          <summary>Filters</summary>
+          <div class="dropdown-menu">
+            <label><input type="checkbox" data-filter="Field" checked /> Fields</label>
+            <label><input type="checkbox" data-filter="CalculatedField" checked /> Calculated</label>
+            <label><input type="checkbox" data-filter="Worksheet" checked /> Worksheets</label>
+            <label><input type="checkbox" data-filter="Dashboard" checked /> Dashboards</label>
+            <label><input type="checkbox" data-filter="Parameter" checked /> Parameters</label>
+            <hr />
+            <label><input type="checkbox" data-filter="lodOnly" /> LOD only</label>
+            <label><input type="checkbox" data-filter="tableCalcOnly" /> Table Calcs only</label>
+          </div>
+        </details>
+        <details class="dropdown" id="export-dropdown">
+          <summary>Export</summary>
+          <div class="dropdown-menu">
+            <button type="button" data-export="workbook-json">workbook_doc.json</button>
+            <button type="button" data-export="graph-json">graph.json</button>
+            <button type="button" data-export="markdown">workbook_doc.md</button>
+            <button type="button" data-export="dot">lineage.dot</button>
+          </div>
+        </details>
+      </div>
+      <div class="toolbar-right">
+        <button id="theme-toggle" type="button" aria-pressed="false">Light</button>
+        <form id="search-form" role="search">
+          <label for="search-box" class="visually-hidden">Search nodes</label>
+          <input id="search-box" name="q" type="search" placeholder="Search..." list="node-names" autocomplete="off" />
+          <datalist id="node-names"></datalist>
+        </form>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <section id="dropzone" class="dropzone" aria-label="Workbook drop zone" tabindex="0">
+          <input id="file-input" type="file" accept=".twb,.twbx" hidden />
+          <p>Drop a Tableau .twb or .twbx file here<br />or click Open Workbook.</p>
+        </section>
+        <nav class="tabs" aria-label="Sidebar tabs">
+          <button type="button" data-tab="panel-nodes" class="active">Nodes</button>
+          <button type="button" data-tab="panel-sheets">Sheets</button>
+          <button type="button" data-tab="panel-calcs">Calcs</button>
+          <button type="button" data-tab="panel-params">Params</button>
+        </nav>
+        <section id="panel-nodes" class="tab-panel active" aria-live="polite">
+          <ul id="list-nodes"></ul>
+        </section>
+        <section id="panel-sheets" class="tab-panel" aria-live="polite">
+          <ul id="list-sheets"></ul>
+        </section>
+        <section id="panel-calcs" class="tab-panel" aria-live="polite">
+          <ul id="list-calcs"></ul>
+        </section>
+        <section id="panel-params" class="tab-panel" aria-live="polite">
+          <ul id="list-params"></ul>
+        </section>
+      </aside>
+
+      <section class="graph-container">
+        <div id="graph"></div>
+      </section>
+
+      <aside class="details" id="details" aria-live="polite">
+        <h2>No selection</h2>
+        <p>Load a workbook and choose a node to see details.</p>
+      </aside>
+    </main>
+
+    <footer class="status-bar">
+      <span id="status-text">Ready.</span>
+      <span id="footer-info"></span>
+    </footer>
+
+    <script src="./lib/jszip.min.js"></script>
+    <script src="./lib/layout-base.js"></script>
+    <script src="./lib/cose-base.js"></script>
+    <script src="./lib/cytoscape.min.js"></script>
+    <script src="./lib/cytoscape-cose-bilkent.min.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
