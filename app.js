@@ -33,6 +33,7 @@ function bindUI() {
   const fileInput = document.getElementById('file-input');
   const dropzone = document.getElementById('dropzone');
   const fitBtn = document.getElementById('fit-btn');
+  const layoutBtn = document.getElementById('layout-btn');
   const expand1Btn = document.getElementById('expand-1-btn');
   const expand2Btn = document.getElementById('expand-2-btn');
   const hideIsolatedBtn = document.getElementById('hide-isolated-btn');
@@ -77,8 +78,13 @@ function bindUI() {
 
   fitBtn.addEventListener('click', () => {
     if (!state.cy) return;
-    state.cy.elements().removeClass('cy-dim');
+    state.cy.elements().removeClass('faded');
     fitGraph();
+  });
+
+  layoutBtn.addEventListener('click', () => {
+    if (!state.cy) return;
+    runAutoLayout();
   });
 
   expand1Btn.addEventListener('click', () => expandNeighbors(1));
@@ -186,6 +192,18 @@ function bootGraph() {
     container,
     wheelSensitivity: 0.2,
     autoungrabify: false,
+    layout: {
+      name: 'cose-bilkent',
+      animate: 'end',
+      randomize: true,
+      fit: true,
+      padding: 50,
+      nodeRepulsion: 4500,
+      idealEdgeLength: 140,
+      gravity: 0.25,
+      numIter: 2500,
+      tile: true,
+    },
     style: [
       {
         selector: 'node',
@@ -257,9 +275,9 @@ function bootGraph() {
         },
       },
       {
-        selector: '.cy-dim',
+        selector: '.faded',
         style: {
-          opacity: 0.1,
+          opacity: 0.15,
         },
       },
     ],
@@ -272,7 +290,7 @@ function bootGraph() {
 
   state.cy.on('tap', (event) => {
     if (event.target === state.cy) {
-      state.cy.elements().removeClass('cy-dim');
+      state.cy.elements().removeClass('faded');
       state.cy.$('node').unselect();
       renderDetails(null);
       state.selectedNodeId = null;
@@ -771,15 +789,16 @@ function drawGraph(graph) {
     });
     state.cy.add(elements);
   });
-  applyFilters();
-  state.cy.elements().removeClass('cy-dim');
+  applyFilters({ rerunLayout: false });
+  state.cy.elements().removeClass('faded');
   state.cy.$('node').unselect();
   renderDetails(null);
   syncListSelection(null);
   fitGraph();
+  runAutoLayout();
 }
 
-function applyFilters() {
+function applyFilters(options = {}) {
   if (!state.cy) return;
   state.cy.batch(() => {
     state.cy.nodes().forEach((node) => {
@@ -801,6 +820,9 @@ function applyFilters() {
       edge.style('display', sourceVisible && targetVisible ? 'element' : 'none');
     });
   });
+  if (options.rerunLayout !== false) {
+    runAutoLayout();
+  }
 }
 
 function expandNeighbors(depth) {
@@ -811,17 +833,21 @@ function expandNeighbors(depth) {
     return;
   }
   const node = selected[0];
-  const scope = highlightNeighborhood(node, depth);
-  fitToElements(scope);
+  focusOnNode(node.id(), { depth, center: true });
+  runAutoLayout();
 }
 
 function highlightNeighborhood(node, depth = 1) {
+  if (!state.cy) {
+    return typeof node.closedNeighborhood === 'function' ? node.closedNeighborhood() : node;
+  }
   let scope = node.closedNeighborhood();
   for (let i = 1; i < depth; i += 1) {
     scope = scope.union(scope.closedNeighborhood());
   }
-  state.cy.elements().addClass('cy-dim');
-  scope.removeClass('cy-dim');
+  state.cy.elements().addClass('faded');
+  scope.removeClass('faded');
+  scope.connectedEdges().removeClass('faded');
   return scope;
 }
 
@@ -843,6 +869,7 @@ function hideIsolated() {
       }
     });
   });
+  runAutoLayout();
 }
 
 function fitGraph() {
@@ -853,14 +880,55 @@ function fitGraph() {
   }
 }
 
-function fitToElements(elements) {
+function fitToElements(elements, padding = 80) {
   if (!state.cy) return;
   const visible = elements.filter((ele) => ele.style('display') !== 'none');
   if (visible.length) {
-    state.cy.fit(visible, 80);
+    state.cy.fit(visible, padding);
   } else {
     fitGraph();
   }
+}
+
+function runAutoLayout(overrides = {}) {
+  if (!state.cy) return;
+  const options = {
+    name: 'cose-bilkent',
+    animate: 'end',
+    randomize: false,
+    fit: true,
+    padding: 80,
+    ...overrides,
+  };
+  state.cy.layout(options).run();
+}
+
+function runFocusedLayout(collection, overrides = {}) {
+  if (!state.cy || !collection) return;
+  const nodes = collection.filter((ele) => ele.isNode && ele.isNode());
+  const target = nodes.length ? nodes : collection;
+  const options = {
+    name: 'cose-bilkent',
+    animate: 'end',
+    randomize: false,
+    fit: true,
+    padding: 120,
+    ...overrides,
+  };
+  if (!target.length) {
+    runAutoLayout({ padding: options.padding });
+    return;
+  }
+  try {
+    const layout = target.layout(options);
+    if (layout && typeof layout.run === 'function') {
+      layout.run();
+      return;
+    }
+  } catch (error) {
+    console.warn('Focused layout fallback', error);
+  }
+  runAutoLayout({ padding: options.padding });
 }
 
 function focusOnNode(id, options = {}) {
@@ -873,8 +941,9 @@ function focusOnNode(id, options = {}) {
   const depth = options.depth || 1;
   const scope = highlightNeighborhood(node, depth);
   if (options.center !== false) {
-    fitToElements(scope);
+    fitToElements(scope, options.fitPadding ?? 120);
   }
+  runFocusedLayout(scope, { padding: options.layoutPadding ?? 120 });
   renderDetails(node.data());
   syncListSelection(id);
 }

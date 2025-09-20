@@ -188,6 +188,11 @@ main.layout {
   height: 100%;
 }
 
+.faded {
+  opacity: 0.15;
+  transition: opacity 120ms ease;
+}
+
 .details {
   padding: 1rem;
   border-left: 1px solid var(--color-border);
