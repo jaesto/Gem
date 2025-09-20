@@ -57,8 +57,11 @@ tableau-browser-mvp/
 │  ├─ styles.css
 │  ├─ app.js
 │  └─ lib/
+│     ├─ cose-base.js
+│     ├─ cytoscape-cose-bilkent.min.js
 │     ├─ cytoscape.min.js
-│     └─ jszip.min.js
+│     ├─ jszip.min.js
+│     └─ layout-base.js
 └─ .github/workflows/pages.yml
 ```
 
