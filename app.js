@@ -43,6 +43,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (event) => {
     showError('Unhandled promise rejection:', event.reason);
   });
+  window.addEventListener('resize', () => fitGraph());
 }
 
 let hasBilkent = false;
@@ -436,10 +437,14 @@ function bootGraph() {
 }
 
 function setStatus(text) {
-  const el = document.getElementById('status') || document.getElementById('status-text');
-  if (el) {
+  const targets = [
+    document.getElementById('status'),
+    document.getElementById('status-text'),
+  ].filter(Boolean);
+  if (!targets.length) return;
+  targets.forEach((el) => {
     el.textContent = text;
-  }
+  });
 }
 
 async function handleFile(file) {
@@ -976,6 +981,8 @@ function drawGraph(graph) {
 
   applyFilters({ rerunLayout: false });
 
+  fitGraph();
+
   if (nodeCount) {
     runLayoutWithFit(getGraphLayoutOptions(nodeCount));
   }
@@ -1050,10 +1057,11 @@ function hideIsolated() {
 
 function fitGraph() {
   if (!state.cy) return;
+  const rect = document.getElementById('graph')?.getBoundingClientRect();
+  if (!rect || rect.width < 10 || rect.height < 10) return;
   const elements = state.cy.elements().filter((ele) => ele.style('display') !== 'none');
-  if (elements.length) {
-    state.cy.fit(elements, 100);
-  }
+  if (!elements.length) return;
+  state.cy.fit(elements, 40);
 }
 
 function fitToElements(elements, padding = 80) {
