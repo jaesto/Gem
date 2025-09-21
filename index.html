@@ -14,12 +14,12 @@
   <body>
     <header class="toolbar">
       <div class="toolbar-left">
-        <button id="open-workbook-btn" type="button">Open Workbook</button>
-        <button id="fit-btn" type="button">Fit</button>
-        <button id="layout-btn" type="button">Auto layout</button>
-        <button id="expand-1-btn" type="button">Expand 1-hop</button>
-        <button id="expand-2-btn" type="button">Expand 2-hop</button>
-        <button id="hide-isolated-btn" type="button">Hide isolated</button>
+        <button id="openBtn" type="button">Open Workbook</button>
+        <button id="fitBtn" type="button">Fit</button>
+        <button id="layoutBtn" type="button">Auto layout</button>
+        <button id="expand1Btn" type="button">Expand 1-hop</button>
+        <button id="expand2Btn" type="button">Expand 2-hop</button>
+        <button id="hideIsolatedBtn" type="button">Hide isolated</button>
         <details class="dropdown" id="filters-dropdown">
           <summary>Filters</summary>
           <div class="dropdown-menu">
@@ -46,8 +46,8 @@
       <div class="toolbar-right">
         <button id="theme-toggle" type="button" aria-pressed="false">Light</button>
         <form id="search-form" role="search">
-          <label for="search-box" class="visually-hidden">Search nodes</label>
-          <input id="search-box" name="q" type="search" placeholder="Search..." list="node-names" autocomplete="off" />
+          <label for="search" class="visually-hidden">Search nodes</label>
+          <input id="search" name="q" type="search" placeholder="Search..." list="node-names" autocomplete="off" />
           <datalist id="node-names"></datalist>
         </form>
       </div>
@@ -55,8 +55,8 @@
 
     <main class="layout">
       <aside class="sidebar">
-        <section id="dropzone" class="dropzone" aria-label="Workbook drop zone" tabindex="0">
-          <input id="file-input" type="file" accept=".twb,.twbx" hidden />
+        <section id="dropZone" class="dropzone" aria-label="Workbook drop zone" tabindex="0">
+          <input id="fileInput" type="file" accept=".twb,.twbx" hidden />
           <p>Drop a Tableau .twb or .twbx file here<br />or click Open Workbook.</p>
         </section>
         <nav class="tabs" aria-label="Sidebar tabs">
@@ -90,13 +90,15 @@
     </main>
 
     <footer class="status-bar">
-      <span id="status-text">Ready.</span>
+      <span id="status">Ready.</span>
       <span id="footer-info"></span>
     </footer>
 
+    <div id="errOverlay"></div>
+
     <script src="./lib/jszip.min.js"></script>
     <script src="./lib/cytoscape.min.js"></script>
-    <script src="./lib/cytoscape-cose-bilkent.min.js"></script>
+    <script src="./lib/cytoscape-cose-bilkent.min.js"></script> <!-- keep if present -->
     <script src="./app.js"></script>
   </body>
 </html>

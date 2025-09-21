@@ -22,16 +22,49 @@ const state = {
 
 const NAME_NORMALIZER = /[\[\]]/g;
 
-if (typeof window !== 'undefined' && window.cytoscape && window.cytoscapeCoseBilkent) {
-  window.cytoscape.use(window.cytoscapeCoseBilkent);
+function showError(msg, err) {
+  const el = document.getElementById('errOverlay');
+  if (!el) return;
+  el.style.display = 'block';
+  el.innerHTML =
+    '<strong>Error</strong><pre>' +
+    (msg || '') +
+    (err ? `\n${err.stack || err.message || err}` : '') +
+    '</pre>';
+  console.error('[viewer]', msg, err);
 }
 
-function getElementByIdSafe(id) {
-  const element = document.getElementById(id);
-  if (!element) {
-    console.warn(`Element with id #${id} not found; skipping binding.`);
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (event) => {
+    const detail = event.error || event.message;
+    showError('Uncaught error:', detail);
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    showError('Unhandled promise rejection:', event.reason);
+  });
+}
+
+let hasBilkent = false;
+try {
+  if (typeof window !== 'undefined' && window.cytoscape && window.cytoscapeCoseBilkent) {
+    window.cytoscape.use(window.cytoscapeCoseBilkent);
+    hasBilkent = true;
   }
-  return element;
+} catch (error) {
+  console.warn('bilkent registration failed', error);
+}
+
+function getEl(...ids) {
+  for (const id of ids) {
+    const element = document.getElementById(id);
+    if (element) {
+      return element;
+    }
+  }
+  if (ids.length) {
+    console.warn(`Element not found for ids: ${ids.join(', ')}`);
+  }
+  return null;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -41,19 +74,19 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function bindUI() {
-  const openBtn = getElementByIdSafe('open-workbook-btn');
-  const fileInput = getElementByIdSafe('file-input');
-  const dropzone = getElementByIdSafe('dropzone');
-  const fitBtn = getElementByIdSafe('fit-btn');
-  const layoutBtn = getElementByIdSafe('layout-btn');
-  const expand1Btn = getElementByIdSafe('expand-1-btn');
-  const expand2Btn = getElementByIdSafe('expand-2-btn');
-  const hideIsolatedBtn = getElementByIdSafe('hide-isolated-btn');
-  const themeToggle = getElementByIdSafe('theme-toggle');
-  const searchForm = getElementByIdSafe('search-form');
-  const searchBox = getElementByIdSafe('search-box');
-  const filtersDropdown = getElementByIdSafe('filters-dropdown');
-  const exportDropdown = getElementByIdSafe('export-dropdown');
+  const openBtn = getEl('openBtn', 'open-workbook-btn');
+  const fileInput = getEl('fileInput', 'file-input');
+  const dropZone = getEl('dropZone', 'dropzone');
+  const fitBtn = getEl('fitBtn', 'fit-btn');
+  const layoutBtn = getEl('layoutBtn', 'layout-btn');
+  const expand1Btn = getEl('expand1Btn', 'expand-1-btn');
+  const expand2Btn = getEl('expand2Btn', 'expand-2-btn');
+  const hideIsolatedBtn = getEl('hideIsolatedBtn', 'hide-isolated-btn');
+  const themeToggle = getEl('theme-toggle');
+  const searchForm = getEl('search-form');
+  const searchBox = getEl('search', 'search-box');
+  const filtersDropdown = getEl('filtersDropdown', 'filters-dropdown');
+  const exportDropdown = getEl('exportDropdown', 'export-dropdown');
 
   if (openBtn && fileInput) {
     openBtn.addEventListener('click', () => fileInput.click());
@@ -61,29 +94,28 @@ function bindUI() {
 
   if (fileInput) {
     fileInput.addEventListener('change', async (event) => {
+      const input = event.target;
+      const files = input?.files;
+      const file = files && files[0];
+      if (!file) return;
       try {
-        const [file] = event.target.files || [];
-        if (file) {
-          await handleFile(file);
-        }
+        await handleFile(file);
       } catch (error) {
-        console.error('Failed to open workbook from file input', error);
-        if (error?.message) {
-          setStatus(error.message);
-        } else {
-          setStatus('Failed to open workbook.');
+        if (!error?.__handledByOverlay) {
+          showError('Failed to read workbook', error);
+          setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
         }
       } finally {
-        if (event.target) {
-          event.target.value = '';
+        if (input) {
+          input.value = '';
         }
       }
     });
   }
 
-  if (dropzone && fileInput) {
-    dropzone.addEventListener('click', () => fileInput.click());
-    dropzone.addEventListener('keypress', (event) => {
+  if (dropZone && fileInput) {
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('keypress', (event) => {
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
         fileInput.click();
@@ -91,28 +123,40 @@ function bindUI() {
     });
   }
 
-  if (dropzone) {
-    dropzone.addEventListener('dragover', (event) => {
+  if (dropZone) {
+    dropZone.addEventListener('dragenter', (event) => {
       event.preventDefault();
-      dropzone.classList.add('dragover');
+      dropZone.classList.add('dragover');
     });
-
-    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
-
-    dropzone.addEventListener('drop', async (event) => {
+    dropZone.addEventListener('dragover', (event) => {
       event.preventDefault();
-      dropzone.classList.remove('dragover');
-      const files = event.dataTransfer?.files;
-      if (files && files.length) {
-        try {
-          await handleFile(files[0]);
-        } catch (error) {
-          console.error('Failed to open workbook from drop', error);
-          if (error?.message) {
-            setStatus(error.message);
-          } else {
-            setStatus('Failed to open workbook.');
+      dropZone.classList.add('dragover');
+    });
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.classList.remove('dragover');
+    });
+    dropZone.addEventListener('drop', async (event) => {
+      event.preventDefault();
+      dropZone.classList.remove('dragover');
+      try {
+        const dt = event.dataTransfer;
+        let file = dt?.files?.[0] || null;
+        if (!file && dt?.items?.length) {
+          const item = Array.from(dt.items).find((entry) => entry.kind === 'file');
+          if (item) {
+            file = item.getAsFile();
           }
+        }
+        if (!file) {
+          showError('No file dropped');
+          setStatus('No file dropped. Please provide a .twb or .twbx file.');
+          return;
+        }
+        await handleFile(file);
+      } catch (error) {
+        if (!error?.__handledByOverlay) {
+          showError('Failed to read workbook', error);
+          setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
         }
       }
     });
@@ -263,14 +307,16 @@ function bootGraph() {
     throw new Error('Graph container missing.');
   }
 
+  const layoutName = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
+
   state.cy = cytoscape({
     container,
     wheelSensitivity: 0.2,
     autoungrabify: false,
     layout: {
-      name: 'cose-bilkent',
+      name: layoutName,
       animate: 'end',
-      randomize: true,
+      randomize: false,
       fit: true,
       padding: 50,
       nodeRepulsion: 4500,
@@ -375,7 +421,7 @@ function bootGraph() {
 }
 
 function setStatus(text) {
-  const el = document.getElementById('status-text');
+  const el = document.getElementById('status') || document.getElementById('status-text');
   if (el) {
     el.textContent = text;
   }
@@ -383,6 +429,11 @@ function setStatus(text) {
 
 async function handleFile(file) {
   if (!file) {
+    const error = new Error('No file provided.');
+    error.__handledByOverlay = true;
+    showError('Failed to read workbook', error);
+    setStatus('Failed to read workbook: No file provided.');
+    updateFooter();
     return;
   }
 
@@ -396,62 +447,35 @@ async function handleFile(file) {
     return name.slice(dotIndex + 1).toLowerCase();
   })();
 
+  if (extension !== 'twb' && extension !== 'twbx') {
+    setStatus('Unsupported file type. Please provide a .twb or .twbx file.');
+    updateFooter();
+    return;
+  }
+
   setStatus(`Loading ${fileName}...`);
 
   try {
-    if (extension !== 'twb' && extension !== 'twbx') {
-      setStatus('Unsupported file type. Please provide a .twb or .twbx file.');
-      return;
-    }
-
     let workbookText = '';
 
     if (extension === 'twbx') {
-      let zip;
-      try {
-        const buffer = await file.arrayBuffer();
-        zip = await JSZip.loadAsync(buffer);
-      } catch (error) {
-        console.error('Failed to load workbook archive', error);
-        setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
-        return;
-      }
-
-      let workbookEntry = null;
-      zip.forEach((relativePath, entry) => {
-        if (!workbookEntry && relativePath.toLowerCase().endsWith('.twb')) {
-          workbookEntry = entry;
-        }
-      });
-
+      const buffer = await file.arrayBuffer();
+      const zip = await JSZip.loadAsync(buffer);
+      const entries = Object.values(zip.files || {});
+      const workbookEntry = entries.find((entry) => entry.name?.toLowerCase().endsWith('.twb'));
       if (!workbookEntry) {
-        setStatus('Failed to read workbook: .twbx archive did not contain a .twb file.');
+        showError('No .twb found inside .twbx');
+        setStatus('Failed to read workbook: No .twb found inside .twbx.');
         return;
       }
-
-      try {
-        workbookText = await workbookEntry.async('text');
-      } catch (error) {
-        console.error('Failed to extract workbook from archive', error);
-        setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
-        return;
-      }
+      workbookText = await workbookEntry.async('text');
     } else {
-      try {
-        workbookText = await file.text();
-      } catch (error) {
-        console.error('Failed to read workbook file', error);
-        setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
-        return;
-      }
+      workbookText = await file.text();
     }
 
-    let meta;
-    try {
-      meta = parseWorkbookXML(workbookText);
-    } catch (error) {
-      console.error('Failed to parse workbook XML', error);
-      setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
+    const meta = parseWorkbookXML(workbookText);
+    if (!meta) {
+      setStatus('Failed to read workbook: Unable to parse workbook XML.');
       return;
     }
 
@@ -469,8 +493,12 @@ async function handleFile(file) {
     runAutoLayout();
     setStatus(`Loaded ${fileName}`);
   } catch (error) {
-    console.error('Unexpected error while handling workbook', error);
+    showError('Failed to read workbook', error);
     setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
+    if (error && typeof error === 'object') {
+      error.__handledByOverlay = true;
+    }
+    throw error;
   } finally {
     updateFooter();
   }
@@ -481,7 +509,11 @@ function parseWorkbookXML(xmlText) {
   const xml = parser.parseFromString(xmlText, 'text/xml');
   const errorNode = xml.querySelector('parsererror');
   if (errorNode) {
-    throw new Error('Unable to parse workbook XML.');
+    const message = errorNode.textContent?.trim() || 'Unable to parse workbook XML.';
+    const error = new Error(message);
+    error.__handledByOverlay = true;
+    showError('XML parse error', error);
+    return null;
   }
 
   const meta = {
@@ -1019,8 +1051,9 @@ function runAutoLayout(overrides = {}) {
   if (!elements || !elements.length) {
     return;
   }
+  const name = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
   const options = {
-    name: 'cose-bilkent',
+    name,
     animate: 'end',
     randomize: false,
     fit: true,
@@ -1041,8 +1074,9 @@ function runFocusedLayout(collection, overrides = {}) {
   if (!state.cy || !collection || !state.cy.elements().length) return;
   const nodes = collection.filter((ele) => ele.isNode && ele.isNode());
   const target = nodes.length ? nodes : collection;
+  const layoutName = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
   const options = {
-    name: 'cose-bilkent',
+    name: layoutName,
     animate: 'end',
     randomize: false,
     fit: true,
