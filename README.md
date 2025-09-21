@@ -12,6 +12,16 @@ An offline, client-side viewer that parses Tableau `.twb` and `.twbx` workbooks 
 - Filter controls for node types, LOD-only, and table-calculation-only views
 - Exportable artifacts: `workbook_doc.json`, `graph.json`, `workbook_doc.md`, and `lineage.dot`
 
+## Branding & Theming
+
+- Dark-first design tokens live in `styles.css` as CSS custom properties such as:
+  - `--gem-bg`, `--gem-surface`, `--gem-surface-2`
+  - `--gem-text`, `--gem-muted`
+  - `--gem-primary`, `--gem-primary-2`, `--gem-primary-3`, `--gem-accent`
+  - `--gem-success`, `--gem-warning`
+  - Utility tokens: `--gem-border`, `--gem-shadow`, `--gem-glow`, `--radius`, `--radius-lg`, `--pad`, `--trans`
+- The header logo and favicon are inline SVG data URIs inside `index.html` so the project stays binary-free for Codex PRs. Replace them later by editing the markup in `index.html` if you have custom artwork.
+
 ## Getting started
 
 ### Run locally
