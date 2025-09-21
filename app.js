@@ -22,6 +22,18 @@ const state = {
 
 const NAME_NORMALIZER = /[\[\]]/g;
 
+if (typeof window !== 'undefined' && window.cytoscape && window.cytoscapeCoseBilkent) {
+  window.cytoscape.use(window.cytoscapeCoseBilkent);
+}
+
+function getElementByIdSafe(id) {
+  const element = document.getElementById(id);
+  if (!element) {
+    console.warn(`Element with id #${id} not found; skipping binding.`);
+  }
+  return element;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   bootGraph();
   bindUI();
@@ -29,130 +41,190 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function bindUI() {
-  const openBtn = document.getElementById('open-workbook-btn');
-  const fileInput = document.getElementById('file-input');
-  const dropzone = document.getElementById('dropzone');
-  const fitBtn = document.getElementById('fit-btn');
-  const layoutBtn = document.getElementById('layout-btn');
-  const expand1Btn = document.getElementById('expand-1-btn');
-  const expand2Btn = document.getElementById('expand-2-btn');
-  const hideIsolatedBtn = document.getElementById('hide-isolated-btn');
-  const themeToggle = document.getElementById('theme-toggle');
-  const searchForm = document.getElementById('search-form');
-  const searchBox = document.getElementById('search-box');
-  const filtersDropdown = document.getElementById('filters-dropdown');
-  const exportDropdown = document.getElementById('export-dropdown');
+  const openBtn = getElementByIdSafe('open-workbook-btn');
+  const fileInput = getElementByIdSafe('file-input');
+  const dropzone = getElementByIdSafe('dropzone');
+  const fitBtn = getElementByIdSafe('fit-btn');
+  const layoutBtn = getElementByIdSafe('layout-btn');
+  const expand1Btn = getElementByIdSafe('expand-1-btn');
+  const expand2Btn = getElementByIdSafe('expand-2-btn');
+  const hideIsolatedBtn = getElementByIdSafe('hide-isolated-btn');
+  const themeToggle = getElementByIdSafe('theme-toggle');
+  const searchForm = getElementByIdSafe('search-form');
+  const searchBox = getElementByIdSafe('search-box');
+  const filtersDropdown = getElementByIdSafe('filters-dropdown');
+  const exportDropdown = getElementByIdSafe('export-dropdown');
 
-  openBtn.addEventListener('click', () => fileInput.click());
+  if (openBtn && fileInput) {
+    openBtn.addEventListener('click', () => fileInput.click());
+  }
 
-  fileInput.addEventListener('change', async (event) => {
-    const [file] = event.target.files;
-    if (file) {
-      await handleFile(file);
-    }
-    event.target.value = '';
-  });
+  if (fileInput) {
+    fileInput.addEventListener('change', async (event) => {
+      try {
+        const [file] = event.target.files || [];
+        if (file) {
+          await handleFile(file);
+        }
+      } catch (error) {
+        console.error('Failed to open workbook from file input', error);
+        if (error?.message) {
+          setStatus(error.message);
+        } else {
+          setStatus('Failed to open workbook.');
+        }
+      } finally {
+        if (event.target) {
+          event.target.value = '';
+        }
+      }
+    });
+  }
 
-  dropzone.addEventListener('click', () => fileInput.click());
-  dropzone.addEventListener('keypress', (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
+  if (dropzone && fileInput) {
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('keypress', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        fileInput.click();
+      }
+    });
+  }
+
+  if (dropzone) {
+    dropzone.addEventListener('dragover', (event) => {
       event.preventDefault();
-      fileInput.click();
-    }
-  });
+      dropzone.classList.add('dragover');
+    });
 
-  dropzone.addEventListener('dragover', (event) => {
-    event.preventDefault();
-    dropzone.classList.add('dragover');
-  });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
 
-  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', async (event) => {
+      event.preventDefault();
+      dropzone.classList.remove('dragover');
+      const files = event.dataTransfer?.files;
+      if (files && files.length) {
+        try {
+          await handleFile(files[0]);
+        } catch (error) {
+          console.error('Failed to open workbook from drop', error);
+          if (error?.message) {
+            setStatus(error.message);
+          } else {
+            setStatus('Failed to open workbook.');
+          }
+        }
+      }
+    });
+  }
 
-  dropzone.addEventListener('drop', async (event) => {
-    event.preventDefault();
-    dropzone.classList.remove('dragover');
-    if (event.dataTransfer && event.dataTransfer.files.length) {
-      await handleFile(event.dataTransfer.files[0]);
-    }
-  });
+  if (fitBtn) {
+    fitBtn.addEventListener('click', () => {
+      if (!state.cy) return;
+      state.cy.elements().removeClass('faded');
+      fitGraph();
+    });
+  }
 
-  fitBtn.addEventListener('click', () => {
-    if (!state.cy) return;
-    state.cy.elements().removeClass('faded');
-    fitGraph();
-  });
+  if (layoutBtn) {
+    layoutBtn.addEventListener('click', () => {
+      runAutoLayout();
+    });
+  }
 
-  layoutBtn.addEventListener('click', () => {
-    if (!state.cy) return;
-    runAutoLayout();
-  });
+  if (expand1Btn) {
+    expand1Btn.addEventListener('click', () => {
+      expandNeighbors(1);
+      runAutoLayout();
+    });
+  }
 
-  expand1Btn.addEventListener('click', () => expandNeighbors(1));
-  expand2Btn.addEventListener('click', () => expandNeighbors(2));
-  hideIsolatedBtn.addEventListener('click', hideIsolated);
+  if (expand2Btn) {
+    expand2Btn.addEventListener('click', () => {
+      expandNeighbors(2);
+      runAutoLayout();
+    });
+  }
 
-  filtersDropdown
-    .querySelectorAll('input[type="checkbox"]')
-    .forEach((checkbox) => {
-      checkbox.addEventListener('change', () => {
-        const key = checkbox.dataset.filter;
-        state.filters[key] = checkbox.checked;
-        applyFilters();
+  if (hideIsolatedBtn) {
+    hideIsolatedBtn.addEventListener('click', () => {
+      hideIsolated();
+      fitGraph();
+    });
+  }
+
+  if (filtersDropdown) {
+    filtersDropdown
+      .querySelectorAll('input[type="checkbox"]')
+      .forEach((checkbox) => {
+        checkbox.addEventListener('change', () => {
+          const key = checkbox.dataset.filter;
+          state.filters[key] = checkbox.checked;
+          applyFilters();
+        });
+      });
+  }
+
+  if (exportDropdown) {
+    exportDropdown.querySelectorAll('[data-export]').forEach((button) => {
+      button.addEventListener('click', () => {
+        if (!state.meta || !state.graph) {
+          setStatus('Load a workbook before exporting.');
+          return;
+        }
+        const mode = button.dataset.export;
+        switch (mode) {
+          case 'workbook-json':
+            downloadBlob('workbook_doc.json', JSON.stringify(state.meta, null, 2), 'application/json');
+            break;
+          case 'graph-json':
+            downloadBlob('graph.json', JSON.stringify(state.graph, null, 2), 'application/json');
+            break;
+          case 'markdown':
+            downloadBlob('workbook_doc.md', buildMarkdown(state.meta), 'text/markdown');
+            break;
+          case 'dot':
+            downloadBlob('lineage.dot', buildDot(state.meta), 'text/vnd.graphviz');
+            break;
+          default:
+            break;
+        }
+        exportDropdown.removeAttribute('open');
       });
     });
+  }
 
-  exportDropdown.querySelectorAll('[data-export]').forEach((button) => {
-    button.addEventListener('click', () => {
-      if (!state.meta || !state.graph) {
-        setStatus('Load a workbook before exporting.');
-        return;
-      }
-      const mode = button.dataset.export;
-      switch (mode) {
-        case 'workbook-json':
-          downloadBlob('workbook_doc.json', JSON.stringify(state.meta, null, 2), 'application/json');
-          break;
-        case 'graph-json':
-          downloadBlob('graph.json', JSON.stringify(state.graph, null, 2), 'application/json');
-          break;
-        case 'markdown':
-          downloadBlob('workbook_doc.md', buildMarkdown(state.meta), 'text/markdown');
-          break;
-        case 'dot':
-          downloadBlob('lineage.dot', buildDot(state.meta), 'text/vnd.graphviz');
-          break;
-        default:
-          break;
-      }
-      exportDropdown.removeAttribute('open');
+  if (themeToggle) {
+    themeToggle.addEventListener('click', () => {
+      const root = document.documentElement;
+      const nextTheme = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', nextTheme);
+      themeToggle.textContent = nextTheme === 'dark' ? 'Dark' : 'Light';
+      themeToggle.setAttribute('aria-pressed', nextTheme === 'dark');
     });
-  });
+  }
 
-  themeToggle.addEventListener('click', () => {
-    const root = document.documentElement;
-    const nextTheme = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-    root.setAttribute('data-theme', nextTheme);
-    themeToggle.textContent = nextTheme === 'dark' ? 'Dark' : 'Light';
-    themeToggle.setAttribute('aria-pressed', nextTheme === 'dark');
-  });
-
-  searchForm.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const query = searchBox.value.trim();
-    if (query) {
-      jumpToNode(query);
-    }
-  });
-
-  searchBox.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
+  if (searchForm && searchBox) {
+    searchForm.addEventListener('submit', (event) => {
       event.preventDefault();
       const query = searchBox.value.trim();
       if (query) {
         jumpToNode(query);
       }
-    }
-  });
+    });
+  }
+
+  if (searchBox) {
+    searchBox.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        const query = searchBox.value.trim();
+        if (query) {
+          jumpToNode(query);
+        }
+      }
+    });
+  }
 
   document.querySelectorAll('.tabs button').forEach((button) => {
     button.addEventListener('click', () => {
@@ -160,17 +232,20 @@ function bindUI() {
       document.querySelectorAll('.tab-panel').forEach((panel) => panel.classList.remove('active'));
       button.classList.add('active');
       const targetId = button.dataset.tab;
-      document.getElementById(targetId).classList.add('active');
+      const panel = document.getElementById(targetId);
+      if (panel) {
+        panel.classList.add('active');
+      }
     });
   });
 
   document.addEventListener('keydown', (event) => {
-    if (event.key === '/' && document.activeElement !== searchBox) {
+    if (event.key === '/' && searchBox && document.activeElement !== searchBox) {
       event.preventDefault();
       searchBox.focus();
       searchBox.select();
     }
-    if (event.key.toLowerCase() === 'f' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    if (event.key && event.key.toLowerCase() === 'f' && !event.ctrlKey && !event.metaKey && !event.altKey) {
       const tag = document.activeElement?.tagName?.toLowerCase();
       if (tag !== 'input' && tag !== 'textarea') {
         event.preventDefault();
@@ -307,30 +382,79 @@ function setStatus(text) {
 }
 
 async function handleFile(file) {
+  if (!file) {
+    return;
+  }
+
+  const fileName = file.name || 'Workbook';
+  const extension = (() => {
+    const name = file.name || '';
+    const dotIndex = name.lastIndexOf('.');
+    if (dotIndex === -1) {
+      return '';
+    }
+    return name.slice(dotIndex + 1).toLowerCase();
+  })();
+
+  setStatus(`Loading ${fileName}...`);
+
   try {
-    setStatus(`Loading ${file.name}...`);
+    if (extension !== 'twb' && extension !== 'twbx') {
+      setStatus('Unsupported file type. Please provide a .twb or .twbx file.');
+      return;
+    }
+
     let workbookText = '';
-    const ext = file.name.split('.').pop().toLowerCase();
-    if (ext === 'twbx') {
-      const buffer = await file.arrayBuffer();
-      const zip = await JSZip.loadAsync(buffer);
+
+    if (extension === 'twbx') {
+      let zip;
+      try {
+        const buffer = await file.arrayBuffer();
+        zip = await JSZip.loadAsync(buffer);
+      } catch (error) {
+        console.error('Failed to load workbook archive', error);
+        setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
+        return;
+      }
+
       let workbookEntry = null;
       zip.forEach((relativePath, entry) => {
         if (!workbookEntry && relativePath.toLowerCase().endsWith('.twb')) {
           workbookEntry = entry;
         }
       });
+
       if (!workbookEntry) {
-        throw new Error('No .twb file found inside the archive.');
+        setStatus('Failed to read workbook: .twbx archive did not contain a .twb file.');
+        return;
       }
-      workbookText = await workbookEntry.async('text');
-    } else if (ext === 'twb') {
-      workbookText = await file.text();
+
+      try {
+        workbookText = await workbookEntry.async('text');
+      } catch (error) {
+        console.error('Failed to extract workbook from archive', error);
+        setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
+        return;
+      }
     } else {
-      throw new Error('Unsupported file type. Please provide a .twb or .twbx file.');
+      try {
+        workbookText = await file.text();
+      } catch (error) {
+        console.error('Failed to read workbook file', error);
+        setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
+        return;
+      }
     }
 
-    const meta = parseWorkbookXML(workbookText);
+    let meta;
+    try {
+      meta = parseWorkbookXML(workbookText);
+    } catch (error) {
+      console.error('Failed to parse workbook XML', error);
+      setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
+      return;
+    }
+
     meta.workbook_path = file.name || 'Browser Upload';
     state.meta = meta;
     state.fileInfo = {
@@ -342,12 +466,14 @@ async function handleFile(file) {
     state.graph = graph;
     populateLists(meta);
     drawGraph(graph);
-    setStatus(`Loaded ${file.name}`);
+    runAutoLayout();
+    setStatus(`Loaded ${fileName}`);
   } catch (error) {
-    console.error(error);
-    setStatus(`Error: ${error.message}`);
+    console.error('Unexpected error while handling workbook', error);
+    setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
+  } finally {
+    updateFooter();
   }
-  updateFooter();
 }
 
 function parseWorkbookXML(xmlText) {
@@ -795,7 +921,6 @@ function drawGraph(graph) {
   renderDetails(null);
   syncListSelection(null);
   fitGraph();
-  runAutoLayout();
 }
 
 function applyFilters(options = {}) {
@@ -834,7 +959,6 @@ function expandNeighbors(depth) {
   }
   const node = selected[0];
   focusOnNode(node.id(), { depth, center: true });
-  runAutoLayout();
 }
 
 function highlightNeighborhood(node, depth = 1) {
@@ -869,7 +993,6 @@ function hideIsolated() {
       }
     });
   });
-  runAutoLayout();
 }
 
 function fitGraph() {
@@ -892,6 +1015,10 @@ function fitToElements(elements, padding = 80) {
 
 function runAutoLayout(overrides = {}) {
   if (!state.cy) return;
+  const elements = state.cy.elements();
+  if (!elements || !elements.length) {
+    return;
+  }
   const options = {
     name: 'cose-bilkent',
     animate: 'end',
@@ -900,11 +1027,18 @@ function runAutoLayout(overrides = {}) {
     padding: 80,
     ...overrides,
   };
-  state.cy.layout(options).run();
+  try {
+    const layout = state.cy.layout(options);
+    if (layout && typeof layout.run === 'function') {
+      layout.run();
+    }
+  } catch (error) {
+    console.error('Auto layout failed', error);
+  }
 }
 
 function runFocusedLayout(collection, overrides = {}) {
-  if (!state.cy || !collection) return;
+  if (!state.cy || !collection || !state.cy.elements().length) return;
   const nodes = collection.filter((ele) => ele.isNode && ele.isNode());
   const target = nodes.length ? nodes : collection;
   const options = {
