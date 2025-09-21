@@ -179,14 +179,12 @@ function bindUI() {
   if (expand1Btn) {
     expand1Btn.addEventListener('click', () => {
       expandNeighbors(1);
-      runAutoLayout();
     });
   }
 
   if (expand2Btn) {
     expand2Btn.addEventListener('click', () => {
       expandNeighbors(2);
-      runAutoLayout();
     });
   }
 
@@ -490,7 +488,6 @@ async function handleFile(file) {
     state.graph = graph;
     populateLists(meta);
     drawGraph(graph);
-    runAutoLayout();
     setStatus(`Loaded ${fileName}`);
   } catch (error) {
     showError('Failed to read workbook', error);
@@ -936,22 +933,41 @@ function slugify(text) {
 
 function drawGraph(graph) {
   if (!state.cy) return;
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+  const nodeCount = nodes.length;
+  const isLargeGraph = nodeCount >= 150;
+
   state.cy.batch(() => {
     state.cy.elements().remove();
     const elements = [];
-    graph.nodes.forEach((node) => {
-      elements.push({ data: { ...node } });
+    nodes.forEach((node, index) => {
+      const element = { data: { ...node } };
+      if (isLargeGraph) {
+        element.position = {
+          x: (index % 20) * 50,
+          y: Math.floor(index / 20) * 50,
+        };
+      }
+      elements.push(element);
     });
-    graph.edges.forEach((edge) => {
+    edges.forEach((edge) => {
       elements.push({ data: { id: edge.id, source: edge.from, target: edge.to, type: edge.type } });
     });
     state.cy.add(elements);
   });
+
   applyFilters({ rerunLayout: false });
+
+  if (nodeCount) {
+    runLayoutWithFit(getGraphLayoutOptions(nodeCount));
+  }
+
   state.cy.elements().removeClass('faded');
   state.cy.$('node').unselect();
   renderDetails(null);
   syncListSelection(null);
+  state.selectedNodeId = null;
   fitGraph();
 }
 
@@ -986,25 +1002,11 @@ function expandNeighbors(depth) {
   if (!state.cy) return;
   const selected = state.cy.$('node:selected');
   if (!selected.length) {
-    setStatus('Select a node to expand.');
+    setStatus('Select a node first to expand neighbors');
     return;
   }
   const node = selected[0];
   focusOnNode(node.id(), { depth, center: true });
-}
-
-function highlightNeighborhood(node, depth = 1) {
-  if (!state.cy) {
-    return typeof node.closedNeighborhood === 'function' ? node.closedNeighborhood() : node;
-  }
-  let scope = node.closedNeighborhood();
-  for (let i = 1; i < depth; i += 1) {
-    scope = scope.union(scope.closedNeighborhood());
-  }
-  state.cy.elements().addClass('faded');
-  scope.removeClass('faded');
-  scope.connectedEdges().removeClass('faded');
-  return scope;
 }
 
 function hideIsolated() {
@@ -1045,20 +1047,83 @@ function fitToElements(elements, padding = 80) {
   }
 }
 
-function runAutoLayout(overrides = {}) {
-  if (!state.cy) return;
-  const elements = state.cy.elements();
-  if (!elements || !elements.length) {
-    return;
+function getGraphLayoutOptions(nodeCount) {
+  const layoutName = typeof hasBilkent !== 'undefined' && hasBilkent ? 'cose-bilkent' : 'cose';
+  if (nodeCount >= 150) {
+    return {
+      name: layoutName,
+      animate: 'end',
+      randomize: false,
+      fit: true,
+      padding: 80,
+      nodeRepulsion: 8000,
+      idealEdgeLength: 180,
+      numIter: 1500,
+      gravity: 0.25,
+      tile: true,
+    };
   }
-  const name = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
-  const options = {
-    name,
+  return {
+    name: layoutName,
     animate: 'end',
     randomize: false,
     fit: true,
     padding: 80,
-    ...overrides,
+    nodeRepulsion: 4500,
+    idealEdgeLength: 140,
+    gravity: 0.25,
+    numIter: 2500,
+    tile: true,
+  };
+}
+
+function runLayoutWithFit(options = {}) {
+  if (!state.cy) return null;
+  try {
+    const layout = state.cy.layout(options);
+    if (layout && typeof layout.run === 'function') {
+      if (typeof layout.once === 'function') {
+        layout.once('layoutstop', () => {
+          fitGraph();
+        });
+      } else if (typeof layout.on === 'function') {
+        const handler = () => {
+          if (typeof layout.off === 'function') {
+            layout.off('layoutstop', handler);
+          }
+          fitGraph();
+        };
+        layout.on('layoutstop', handler);
+      }
+      layout.run();
+      return layout;
+    }
+  } catch (error) {
+    console.error('Layout execution failed', error);
+  }
+  return null;
+}
+
+function runAutoLayout(overrides = {}) {
+  if (!state.cy) return;
+  const nodeCount = state.cy.nodes().length;
+  if (!nodeCount) {
+    return;
+  }
+  const options = { ...getGraphLayoutOptions(nodeCount), ...overrides };
+  runLayoutWithFit(options);
+}
+
+function runLocalizedLayout(collection, padding = 80) {
+  if (!state.cy || !collection || !collection.length) return;
+  const nodes = typeof collection.nodes === 'function' ? collection.nodes() : null;
+  const nodeCount = nodes ? nodes.length : 0;
+  if (!nodeCount) return;
+  const baseOptions = getGraphLayoutOptions(nodeCount);
+  const options = {
+    ...baseOptions,
+    padding,
+    eles: collection,
   };
   try {
     const layout = state.cy.layout(options);
@@ -1066,52 +1131,44 @@ function runAutoLayout(overrides = {}) {
       layout.run();
     }
   } catch (error) {
-    console.error('Auto layout failed', error);
+    console.warn('Localized layout failed', error);
   }
 }
 
-function runFocusedLayout(collection, overrides = {}) {
-  if (!state.cy || !collection || !state.cy.elements().length) return;
-  const nodes = collection.filter((ele) => ele.isNode && ele.isNode());
-  const target = nodes.length ? nodes : collection;
-  const layoutName = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
-  const options = {
-    name: layoutName,
-    animate: 'end',
-    randomize: false,
-    fit: true,
-    padding: 120,
-    ...overrides,
-  };
-  if (!target.length) {
-    runAutoLayout({ padding: options.padding });
-    return;
+function getNeighborhood(node, depth = 1) {
+  if (!node || typeof node.closedNeighborhood !== 'function') {
+    return node;
   }
-  try {
-    const layout = target.layout(options);
-    if (layout && typeof layout.run === 'function') {
-      layout.run();
-      return;
-    }
-  } catch (error) {
-    console.warn('Focused layout fallback', error);
+  let hood = node.closedNeighborhood();
+  for (let i = 1; i < depth; i += 1) {
+    hood = hood.union(hood.closedNeighborhood());
   }
-  runAutoLayout({ padding: options.padding });
+  return hood;
 }
 
 function focusOnNode(id, options = {}) {
   if (!state.cy) return;
   const node = state.cy.getElementById(id);
   if (!node || !node.length) return;
-  state.cy.$('node').unselect();
-  node.select();
-  state.selectedNodeId = id;
+
   const depth = options.depth || 1;
-  const scope = highlightNeighborhood(node, depth);
+  const neighborhood = getNeighborhood(node, depth);
+
+  state.cy.batch(() => {
+    state.cy.$('node').unselect();
+    node.select();
+    state.cy.elements().addClass('faded');
+    neighborhood.removeClass('faded');
+  });
+
+  state.selectedNodeId = id;
+
   if (options.center !== false) {
-    fitToElements(scope, options.fitPadding ?? 120);
+    fitToElements(neighborhood, options.fitPadding ?? 120);
   }
-  runFocusedLayout(scope, { padding: options.layoutPadding ?? 120 });
+
+  runLocalizedLayout(neighborhood, options.layoutPadding ?? 80);
+
   renderDetails(node.data());
   syncListSelection(id);
 }
