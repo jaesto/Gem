@@ -239,12 +239,16 @@ function bindUI() {
   }
 
   if (themeToggle) {
+    const root = document.documentElement;
+    const syncThemeToggle = () => {
+      const isLight = root.classList.contains('light');
+      themeToggle.textContent = isLight ? 'Light' : 'Dark';
+      themeToggle.setAttribute('aria-pressed', String(!isLight));
+    };
+    syncThemeToggle();
     themeToggle.addEventListener('click', () => {
-      const root = document.documentElement;
-      const nextTheme = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-      root.setAttribute('data-theme', nextTheme);
-      themeToggle.textContent = nextTheme === 'dark' ? 'Dark' : 'Light';
-      themeToggle.setAttribute('aria-pressed', nextTheme === 'dark');
+      root.classList.toggle('light');
+      syncThemeToggle();
     });
   }
 
@@ -329,16 +333,18 @@ function bootGraph() {
       {
         selector: 'node',
         style: {
-          'background-color': '#3b82f6',
-          color: '#fff',
+          'background-color': 'var(--gem-primary-2)',
+          color: 'var(--gem-text)',
           label: 'data(name)',
           'font-size': 11,
           'text-wrap': 'wrap',
           'text-valign': 'center',
           'text-halign': 'center',
           'text-max-width': 120,
-          'border-width': 1,
-          'border-color': '#1d4ed8',
+          'text-outline-color': 'rgba(0,0,0,.55)',
+          'text-outline-width': 2,
+          'border-width': 1.5,
+          'border-color': 'rgba(14, 11, 20, 0.45)',
           'overlay-opacity': 0,
         },
       },
@@ -352,41 +358,41 @@ function bootGraph() {
       {
         selector: 'node[type = "CalculatedField"]',
         style: {
-          'background-color': '#f97316',
-          'border-color': '#ea580c',
+          'background-color': 'var(--gem-primary)',
+          'border-color': 'var(--gem-primary-3)',
           shape: 'round-rectangle',
         },
       },
       {
         selector: 'node[type = "Worksheet"]',
         style: {
-          'background-color': '#3b82f6',
-          'border-color': '#1d4ed8',
+          'background-color': '#6EE7B7',
+          'border-color': '#10B981',
           shape: 'rectangle',
         },
       },
       {
         selector: 'node[type = "Dashboard"]',
         style: {
-          'background-color': '#8b5cf6',
-          'border-color': '#6d28d9',
+          'background-color': '#F59E0B',
+          'border-color': '#B45309',
           shape: 'hexagon',
         },
       },
       {
         selector: 'node[type = "Parameter"]',
         style: {
-          'background-color': '#14b8a6',
-          'border-color': '#0f766e',
+          'background-color': '#22D3EE',
+          'border-color': '#0891B2',
           shape: 'diamond',
         },
       },
       {
         selector: 'edge',
         style: {
-          width: 1.5,
-          'line-color': '#94a3b8',
-          'target-arrow-color': '#94a3b8',
+          width: 2,
+          'line-color': '#a2a9b6',
+          'target-arrow-color': '#a2a9b6',
           'target-arrow-shape': 'triangle',
           'curve-style': 'bezier',
           'arrow-scale': 1.1,
@@ -396,9 +402,18 @@ function bootGraph() {
         },
       },
       {
+        selector: ':selected',
+        style: {
+          'border-width': 3,
+          'border-color': 'var(--gem-primary)',
+          'line-color': 'var(--gem-primary)',
+          'target-arrow-color': 'var(--gem-primary)',
+        },
+      },
+      {
         selector: '.faded',
         style: {
-          opacity: 0.15,
+          opacity: 0.18,
         },
       },
     ],
