@@ -309,6 +309,26 @@ main.layout {
   color: var(--color-muted);
 }
 
+#errOverlay {
+  position: fixed;
+  left: 10px;
+  bottom: 10px;
+  max-width: 70vw;
+  background: rgba(200, 0, 0, 0.15);
+  color: #ffdddd;
+  border: 1px solid rgba(255, 0, 0, 0.35);
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  display: none;
+  z-index: 9999;
+}
+
+#errOverlay pre {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
