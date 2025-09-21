@@ -18,6 +18,7 @@ const state = {
   fileInfo: null,
   buildTimestamp: new Date().toISOString(),
   selectedNodeId: null,
+  lastFocusDepth: 1,
 };
 
 const NAME_NORMALIZER = /[\[\]]/g;
@@ -203,6 +204,7 @@ function bindUI() {
           const key = checkbox.dataset.filter;
           state.filters[key] = checkbox.checked;
           applyFilters();
+          nudgeLayout();
         });
       });
   }
@@ -968,6 +970,7 @@ function drawGraph(graph) {
   renderDetails(null);
   syncListSelection(null);
   state.selectedNodeId = null;
+  state.lastFocusDepth = 1;
   fitGraph();
 }
 
@@ -1007,6 +1010,7 @@ function expandNeighbors(depth) {
   }
   const node = selected[0];
   focusOnNode(node.id(), { depth, center: true });
+  nudgeLayout();
 }
 
 function hideIsolated() {
@@ -1135,6 +1139,72 @@ function runLocalizedLayout(collection, padding = 80) {
   }
 }
 
+function nudgeLayout() {
+  if (!state.cy) return;
+
+  const selected = state.cy.$('node:selected');
+  let hood = null;
+
+  if (selected.length) {
+    const depth = state.lastFocusDepth || 1;
+    hood = getNeighborhood(selected[0], depth);
+  } else {
+    hood = state.cy
+      .elements()
+      .filter((ele) => ele.style('display') !== 'none' && !ele.hasClass('faded'));
+  }
+
+  if (!hood || !hood.length) {
+    return;
+  }
+
+  const visibleHood = hood.filter((ele) => ele.style('display') !== 'none');
+  const hoodNodes = visibleHood.nodes();
+
+  if (!hoodNodes.length) {
+    return;
+  }
+
+  state.cy.batch(() => {
+    hoodNodes.forEach((node) => {
+      if (typeof node.locked === 'function' && node.locked()) {
+        return;
+      }
+      const position = node.position();
+      if (!position) return;
+      const jitter = () => {
+        const magnitude = 5 + Math.random() * 5;
+        return (Math.random() < 0.5 ? -1 : 1) * magnitude;
+      };
+      node.position({
+        x: position.x + jitter(),
+        y: position.y + jitter(),
+      });
+    });
+  });
+
+  const visibleElements = visibleHood.length
+    ? visibleHood
+    : hoodNodes.union(hoodNodes.connectedEdges());
+
+  const layoutOptions = {
+    name: hasBilkent ? 'cose-bilkent' : 'cose',
+    animate: 'end',
+    randomize: false,
+    fit: !selected.length,
+    eles: visibleElements,
+  };
+
+  try {
+    const layout = state.cy.layout(layoutOptions);
+    if (layout && typeof layout.run === 'function') {
+      layout.run();
+    }
+  } catch (error) {
+    console.warn('Nudge layout failed', error);
+  }
+}
+
 function getNeighborhood(node, depth = 1) {
   if (!node || typeof node.closedNeighborhood !== 'function') {
     return node;
@@ -1162,6 +1232,7 @@ function focusOnNode(id, options = {}) {
   });
 
   state.selectedNodeId = id;
+  state.lastFocusDepth = depth;
 
   if (options.center !== false) {
     fitToElements(neighborhood, options.fitPadding ?? 120);
