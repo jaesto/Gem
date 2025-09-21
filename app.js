@@ -19,6 +19,7 @@ const state = {
   buildTimestamp: new Date().toISOString(),
   selectedNodeId: null,
   lastFocusDepth: 1,
+  graphResizeObserver: null,
 };
 
 const NAME_NORMALIZER = /[\[\]]/g;
@@ -43,7 +44,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (event) => {
     showError('Unhandled promise rejection:', event.reason);
   });
-  window.addEventListener('resize', () => fitGraph());
+  window.addEventListener('resize', fitGraph);
 }
 
 let hasBilkent = false;
@@ -307,15 +308,15 @@ function bindUI() {
 }
 
 function bootGraph() {
-  const container = document.getElementById('graph');
-  if (!container) {
+  const graphEl = document.getElementById('graph');
+  if (!graphEl) {
     throw new Error('Graph container missing.');
   }
 
   const layoutName = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
 
   state.cy = cytoscape({
-    container,
+    container: graphEl,
     wheelSensitivity: 0.2,
     autoungrabify: false,
     layout: {
@@ -420,6 +421,26 @@ function bootGraph() {
     ],
   });
 
+  if (state.graphResizeObserver) {
+    try {
+      state.graphResizeObserver.disconnect();
+    } catch (error) {
+      console.warn('Failed to disconnect previous ResizeObserver', error);
+    }
+    state.graphResizeObserver = null;
+  }
+
+  if (window.ResizeObserver && graphEl) {
+    const ro = new ResizeObserver(() => {
+      if (state.cy) {
+        state.cy.resize();
+        fitGraph();
+      }
+    });
+    ro.observe(graphEl);
+    state.graphResizeObserver = ro;
+  }
+
   state.cy.on('tap', 'node', (event) => {
     const node = event.target;
     focusOnNode(node.id(), { depth: 1, center: true });
@@ -510,6 +531,11 @@ async function handleFile(file) {
     state.graph = graph;
     populateLists(meta);
     drawGraph(graph);
+    const graphEl = document.getElementById('graph');
+    const rect = graphEl?.getBoundingClientRect();
+    if (state.cy && rect && rect.width >= 20 && rect.height >= 20) {
+      runAutoLayout();
+    }
     setStatus(`Loaded ${fileName}`);
   } catch (error) {
     showError('Failed to read workbook', error);
@@ -979,13 +1005,10 @@ function drawGraph(graph) {
     state.cy.add(elements);
   });
 
-  applyFilters({ rerunLayout: false });
-
+  state.cy.resize();
   fitGraph();
 
-  if (nodeCount) {
-    runLayoutWithFit(getGraphLayoutOptions(nodeCount));
-  }
+  applyFilters({ rerunLayout: false });
 
   state.cy.elements().removeClass('faded');
   state.cy.$('node').unselect();
@@ -1057,11 +1080,18 @@ function hideIsolated() {
 
 function fitGraph() {
   if (!state.cy) return;
-  const rect = document.getElementById('graph')?.getBoundingClientRect();
-  if (!rect || rect.width < 10 || rect.height < 10) return;
+  const el = document.getElementById('graph');
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  if (r.width < 20 || r.height < 20) {
+    state.cy.resize();
+    return;
+  }
+  state.cy.resize();
   const elements = state.cy.elements().filter((ele) => ele.style('display') !== 'none');
-  if (!elements.length) return;
-  state.cy.fit(elements, 40);
+  const target = elements.length ? elements : state.cy.elements();
+  if (!target.length) return;
+  state.cy.fit(target, 40);
 }
 
 function fitToElements(elements, padding = 80) {
