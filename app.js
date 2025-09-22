@@ -304,15 +304,15 @@ function bindUI() {
 }
 
 function bootGraph() {
-  const graphEl = document.getElementById('graph');
-  if (!graphEl) {
+  const graphContainerEl = document.getElementById('graph');
+  if (!graphContainerEl) {
     throw new Error('Graph container missing.');
   }
 
   const layoutName = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
 
   state.cy = cytoscape({
-    container: graphEl,
+    container: graphContainerEl,
     wheelSensitivity: 0.2,
     autoungrabify: false,
     layout: {
@@ -338,9 +338,11 @@ function bootGraph() {
           'text-wrap': 'wrap',
           'text-valign': 'center',
           'text-halign': 'center',
-          'text-max-width': 120,
-          'text-outline-color': 'rgba(0,0,0,.55)',
-          'text-outline-width': 2,
+          'text-max-width': '120px',
+          'text-outline-color': 'var(--label-outline)',
+          'text-outline-width': 2.5,
+          'text-overflow-wrap': 'ellipsis',
+          'min-zoomed-font-size': 10,
           'border-width': 1.5,
           'border-color': 'rgba(14, 11, 20, 0.45)',
           'overlay-opacity': 0,
@@ -417,6 +419,20 @@ function bootGraph() {
     ],
   });
 
+  const graphEl = () => state.cy && state.cy.container();
+  state.cy.on('mouseover', 'node', (e) => {
+    const el = graphEl();
+    if (el) {
+      el.title = e.target.data('name') || '';
+    }
+  });
+  state.cy.on('mouseout', 'node', () => {
+    const el = graphEl();
+    if (el) {
+      el.title = '';
+    }
+  });
+
   if (state.graphResizeObserver) {
     try {
       state.graphResizeObserver.disconnect();
@@ -426,14 +442,14 @@ function bootGraph() {
     state.graphResizeObserver = null;
   }
 
-  if (window.ResizeObserver && graphEl) {
+  if (window.ResizeObserver && graphContainerEl) {
     const ro = new ResizeObserver(() => {
       if (state.cy) {
         state.cy.resize();
         fitGraph();
       }
     });
-    ro.observe(graphEl);
+    ro.observe(graphContainerEl);
     state.graphResizeObserver = ro;
   }
 

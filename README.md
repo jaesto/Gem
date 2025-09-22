@@ -7,6 +7,7 @@ An offline, client-side viewer that parses Tableau `.twb` and `.twbx` workbooks 
 - Runs entirely in the browser (no servers, no telemetry, no network access required)
 - Supports Tableau `.twb` (XML) and `.twbx` (packaged) files
 - Interactive Cytoscape graph with pan/zoom/drag, neighbor expansion, and search
+- Node labels automatically adjust contrast per theme, truncate with ellipses, and expose full names on hover
 - Sidebar lists for fields, calculated fields, worksheets, and parameters
 - Detail panel with formulas, references, and usage
 - Filter controls for node types, LOD-only, and table-calculation-only views
@@ -20,11 +21,11 @@ An offline, client-side viewer that parses Tableau `.twb` and `.twbx` workbooks 
   - `--gem-primary`, `--gem-primary-2`, `--gem-primary-3`, `--gem-accent`
   - `--gem-success`, `--gem-warning`
   - Utility tokens: `--gem-border`, `--gem-shadow`, `--gem-glow`, `--radius`, `--radius-lg`, `--pad`, `--trans`
-- The header logo and favicon are inline SVG data URIs inside `index.html` so the project stays binary-free for Codex PRs. Replace them later by editing the markup in `index.html` if you have custom artwork.
+- The header logo first attempts to load `./assets/gem-logo.png`; if unavailable it falls back to the inline SVG contained in `index.html` so the app remains binary-free by default.
 
 ## Toolbar
 
-- Slim horizontal bar with logo left, search centered, controls right.
+- Slim single-line toolbar with logo on the left, centered search, and controls on the right sized for a compact 42px header.
 - Hop dropdown (1–5) replaces expand1/2 buttons.
 
 ## Getting started
