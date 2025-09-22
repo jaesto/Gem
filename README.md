@@ -22,6 +22,11 @@ An offline, client-side viewer that parses Tableau `.twb` and `.twbx` workbooks 
   - Utility tokens: `--gem-border`, `--gem-shadow`, `--gem-glow`, `--radius`, `--radius-lg`, `--pad`, `--trans`
 - The header logo and favicon are inline SVG data URIs inside `index.html` so the project stays binary-free for Codex PRs. Replace them later by editing the markup in `index.html` if you have custom artwork.
 
+## Toolbar
+
+- Slim horizontal bar with logo left, search centered, controls right.
+- Hop dropdown (1–5) replaces expand1/2 buttons.
+
 ## Getting started
 
 ### Run locally
