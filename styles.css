@@ -27,6 +27,10 @@ html.light {
   --label-outline: rgba(255, 255, 255, 0.75);
 }
 
+html.light .cy-edge-label {
+  filter: none;
+}
+
 html.light,
 :root.light {
   --gem-bg: #F7F7FB;

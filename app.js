@@ -7,6 +7,7 @@ const state = {
   lookupMap: new Map(),
   nameToId: new Map(),
   isolatedMode: 'cluster',
+  activeLayout: null,
   filters: {
     Field: true,
     CalculatedField: true,
@@ -90,6 +91,13 @@ function applyCyTheme() {
   const c = themeColors();
   const style = [
     {
+      selector: 'core',
+      style: {
+        'selection-box-color': '#8B5CF6',
+        'selection-box-border-color': '#8B5CF6',
+      },
+    },
+    {
       selector: 'node',
       style: {
         label: 'data(name)',
@@ -111,6 +119,8 @@ function applyCyTheme() {
         'text-halign': 'center',
         'overlay-opacity': 0,
         'border-width': 0,
+        'z-index-compare': 'manual',
+        'z-index': 10,
       },
     },
     { selector: 'node[type="CalculatedField"]', style: { 'background-color': c.calc } },
@@ -121,12 +131,23 @@ function applyCyTheme() {
     {
       selector: 'edge',
       style: {
+        'z-index-compare': 'manual',
+        'z-index': 1,
         'line-color': c.edge,
-        opacity: 0.9,
-        width: 1.5,
+        opacity: 0.95,
+        width: 1.8,
         'curve-style': 'bezier',
         'target-arrow-color': c.edge,
         'target-arrow-shape': 'vee',
+        label: 'data(rel)',
+        'font-size': 9,
+        color: c.text,
+        'text-outline-color': c.outline,
+        'text-outline-width': 2,
+        'text-background-color': 'rgba(0,0,0,0.25)',
+        'text-background-opacity': 0.35,
+        'text-background-padding': 2,
+        'text-rotation': 'autorotate',
       },
     },
     { selector: ':selected', style: { 'border-width': 3, 'border-color': c.calc } },
@@ -137,20 +158,26 @@ function applyCyTheme() {
 
 function fitAll(pad = 80) {
   if (!state.cy) return;
-  const container = typeof state.cy.container === 'function' ? state.cy.container() : null;
-  if (!container) return;
-  const rect = container.getBoundingClientRect();
-  if (rect.width < 20 || rect.height < 20) {
-    state.cy.resize();
-    return;
+  const doFit = () => {
+    if (!state.cy) return;
+    const active = state.activeLayout;
+    if (active && active.running) {
+      state.cy.once('layoutstop', () => requestAnimationFrame(doFit));
+      return;
+    }
+    const vis = state.cy.elements().filter(':visible');
+    if (vis.length > 0) {
+      state.cy.resize();
+      state.cy.fit(vis, pad);
+    }
+  };
+
+  const layout = state.activeLayout;
+  if (layout && layout.running) {
+    state.cy.once('layoutstop', () => requestAnimationFrame(doFit));
+  } else {
+    requestAnimationFrame(doFit);
   }
-  state.cy.resize();
-  const visible = state.cy.elements().filter((ele) => ele.style('display') !== 'none');
-  const targets = visible.length ? visible : state.cy.elements();
-  if (!targets || !targets.length) {
-    return;
-  }
-  state.cy.fit(targets, pad);
 }
 
 function getEl(...ids) {
@@ -272,12 +299,10 @@ function bindUI() {
 
   if (layoutBtn) {
     layoutBtn.addEventListener('click', () => {
-      const ran = breathe('full');
-      if (!ran) {
-        runAutoLayout('full');
-      }
-      breathe('soft');
+      runAutoLayout('soft');
+      setIsolatedMode(state.isolatedMode || 'cluster');
       fitAll(80);
+      breathe('soft');
     });
   }
 
@@ -311,6 +336,7 @@ function bindUI() {
       if (!mode) return;
       setIsoOpen(false);
       setIsolatedMode(mode);
+      fitAll(80);
       breathe('soft');
     });
     document.addEventListener('click', (event) => {
@@ -592,11 +618,6 @@ async function handleFile(file) {
     state.graph = graph;
     populateLists(meta);
     drawGraph(graph);
-    const graphEl = document.getElementById('graph');
-    const rect = graphEl?.getBoundingClientRect();
-    if (state.cy && rect && rect.width >= 20 && rect.height >= 20) {
-      runAutoLayout();
-    }
     setStatus(`Loaded ${fileName}`);
   } catch (error) {
     showError('Failed to read workbook', error);
@@ -886,16 +907,17 @@ function buildGraphJSON(meta) {
     state.nodeIndex.set(node.id, node);
   }
 
-  function addEdge(from, to, type) {
+  function addEdge(from, to, rel) {
     if (!from || !to) return;
-    const edgeKey = `${from}->${to}:${type}`;
+    const edgeKey = `${from}->${to}:${rel}`;
     if (edgeKeys.has(edgeKey)) return;
     edgeKeys.add(edgeKey);
     edges.push({
       id: edgeKey,
       from,
       to,
-      type,
+      rel,
+      type: rel,
     });
   }
 
@@ -1047,29 +1069,43 @@ function drawGraph(graph) {
   const nodeCount = nodes.length;
   const isLargeGraph = nodeCount >= 150;
 
-  state.cy.batch(() => {
-    state.cy.elements().remove();
-    const elements = [];
-    nodes.forEach((node, index) => {
-      const element = { data: { ...node } };
-      if (isLargeGraph) {
-        element.position = {
-          x: (index % 20) * 50,
-          y: Math.floor(index / 20) * 50,
-        };
-      }
-      elements.push(element);
-    });
-    edges.forEach((edge) => {
-      elements.push({ data: { id: edge.id, source: edge.from, target: edge.to, type: edge.type } });
-    });
-    state.cy.add(elements);
+  const nodeIdSet = new Set(nodes.map((node) => node.id));
+  const nodeEles = [];
+  const edgeEles = [];
+
+  nodes.forEach((node, index) => {
+    const element = { data: { ...node } };
+    if (isLargeGraph) {
+      element.position = {
+        x: (index % 20) * 50,
+        y: Math.floor(index / 20) * 50,
+      };
+    }
+    nodeEles.push(element);
   });
 
-  applyCyTheme();
-  state.cy.resize();
+  edges.forEach((edge) => {
+    if (!edge || !edge.id || !edge.from || !edge.to) return;
+    if (!nodeIdSet.has(edge.from) || !nodeIdSet.has(edge.to)) {
+      console.warn('Edge references missing node', edge);
+      return;
+    }
+    edgeEles.push({ data: { id: edge.id, source: edge.from, target: edge.to, rel: edge.rel || edge.type } });
+  });
 
-  applyFilters({ rerunLayout: false });
+  if (edgeEles.length === 0) {
+    console.warn('No edges parsed — check workbook link extraction');
+  }
+
+  state.cy.startBatch();
+  state.cy.elements().remove();
+  state.cy.add(nodeEles);
+  state.cy.add(edgeEles);
+  state.cy.endBatch();
+
+  state.cy.elements().show();
+
+  applyCyTheme();
 
   state.cy.elements().removeClass('faded');
   state.cy.$('node').unselect();
@@ -1078,7 +1114,7 @@ function drawGraph(graph) {
   state.selectedNodeId = null;
   state.lastFocusDepth = 1;
 
-  setIsolatedMode('cluster');
+  setIsolatedMode(state.isolatedMode || 'cluster');
   fitAll(100);
   breathe('full');
 }
@@ -1110,6 +1146,7 @@ function applyFilters(options = {}) {
   }
 
   setIsolatedMode(state.isolatedMode || 'cluster');
+  fitAll(80);
   breathe('soft');
 }
 
@@ -1147,13 +1184,13 @@ function expandNeighbors(depth) {
   }
 
   setIsolatedMode(state.isolatedMode || 'cluster');
-  breathe('soft');
   fitAll(80);
+  breathe('soft');
 }
 
 function fitToElements(elements, padding = 80) {
   if (!state.cy) return;
-  const visible = elements.filter((ele) => ele.style('display') !== 'none');
+  const visible = elements.filter(':visible');
   if (visible.length) {
     state.cy.fit(visible, padding);
   } else {
@@ -1162,22 +1199,43 @@ function fitToElements(elements, padding = 80) {
 }
 
 function runAutoLayout(mode) {
-  if (!state.cy) return;
+  if (!state.cy) return null;
   const soft = mode !== 'full';
-  state.cy
-    .layout({
-      name: layoutName,
-      fit: true,
-      animate: 'end',
-      padding: 80,
-      randomize: false,
-      nodeRepulsion: soft ? 5200 : 8000,
-      idealEdgeLength: soft ? 150 : 180,
-      gravity: 0.25,
-      numIter: soft ? 1100 : 1700,
-      tile: true,
-    })
-    .run();
+  const layout = state.cy.layout({
+    name: layoutName,
+    fit: true,
+    animate: 'end',
+    padding: 80,
+    randomize: false,
+    nodeRepulsion: soft ? 5200 : 8000,
+    idealEdgeLength: soft ? 150 : 180,
+    gravity: 0.25,
+    numIter: soft ? 1100 : 1700,
+    tile: true,
+  });
+
+  state.activeLayout = layout;
+  layout.running = true;
+
+  const clearActive = () => {
+    layout.running = false;
+    if (state.activeLayout === layout) {
+      state.activeLayout = null;
+    }
+  };
+
+  if (layout && typeof layout.one === 'function') {
+    layout.one('layoutstop', clearActive);
+  } else if (layout && typeof layout.on === 'function') {
+    layout.on('layoutstop', clearActive);
+  } else if (state.cy && typeof state.cy.one === 'function') {
+    state.cy.one('layoutstop', clearActive);
+  } else if (state.cy && typeof state.cy.on === 'function') {
+    state.cy.on('layoutstop', clearActive);
+  }
+
+  layout.run();
+  return layout;
 }
 
 function nudge(eles) {
@@ -1188,13 +1246,6 @@ function nudge(eles) {
     x: position.x + (Math.random() * 4 - 2),
     y: position.y + (Math.random() * 4 - 2),
   }));
-}
-
-function getIsolated() {
-  if (!state.cy) {
-    return state.cy?.collection?.() || null;
-  }
-  return state.cy.nodes().filter((node) => node.degree(false) === 0);
 }
 
 function syncIsolatedUI(mode) {
@@ -1232,38 +1283,34 @@ function setIsolatedMode(mode) {
   state.isolatedMode = resolved;
 
   if (!state.cy) return;
-  const iso = getIsolated();
-  if (!iso || typeof iso.show !== 'function') return;
+  const iso = state.cy.nodes().filter((node) => node.connectedEdges().length === 0);
+
+  if (resolved === 'unhide') {
+    state.cy.nodes().show();
+    state.cy.edges().show();
+    return;
+  }
+
+  if (!iso || typeof iso.hide !== 'function') {
+    return;
+  }
+
+  if (resolved === 'hide') {
+    iso.filter(':visible').hide();
+    return;
+  }
 
   iso.show();
 
-  const finalize = () => {
-    fitAll(80);
-  };
+  const activeIso = iso.filter(':visible');
 
-  if (resolved === 'hide') {
-    iso.hide();
-    finalize();
-    return;
-  }
-
-  if (resolved === 'unhide') {
-    iso.show();
-    runAutoLayout('soft');
-    finalize();
-    return;
-  }
-
-  if (!iso.length) {
-    runAutoLayout('soft');
-    finalize();
+  if (!activeIso.length) {
     return;
   }
 
   if (resolved === 'scatter') {
-    nudge(iso);
+    nudge(activeIso);
     runAutoLayout('soft');
-    finalize();
     return;
   }
 
@@ -1274,18 +1321,17 @@ function setIsolatedMode(mode) {
   const x1 = bb.x2 + pad;
   const y1 = Math.max(bb.y1, bb.y2 - islandH);
 
-  iso
+  activeIso
     .layout({
       name: 'grid',
       boundingBox: { x1, y1, x2: x1 + islandW, y2: y1 + islandH },
       avoidOverlap: true,
       condense: true,
-      rows: Math.ceil(Math.sqrt(Math.max(1, iso.length))),
+      rows: Math.ceil(Math.sqrt(Math.max(1, activeIso.length))),
     })
     .run();
 
   runAutoLayout('soft');
-  finalize();
 }
 
 let _breathBusy = false;
