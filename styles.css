@@ -175,18 +175,6 @@ summary {
   outline: none;
 }
 
-#isolatedMode {
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--gem-border);
-  background: var(--gem-surface);
-  color: var(--gem-text);
-  font-size: 13px;
-}
-
 summary {
   list-style: none;
   cursor: pointer;
@@ -201,10 +189,6 @@ summary {
   font-size: 13px;
 }
 
-.dropdown {
-  position: relative;
-}
-
 summary::after {
   content: '▾';
   font-size: 0.75rem;
@@ -215,19 +199,24 @@ summary::-webkit-details-marker {
   display: none;
 }
 
+.dropdown {
+  position: relative;
+}
+
 .dropdown[open] > summary {
   box-shadow: var(--gem-glow);
   border-color: rgba(139, 92, 246, 0.45);
 }
 
-.dropdown .menu,
-.dropdown .dropdown-menu {
+.dropdown > .menu,
+.dropdown > .dropdown-menu {
   position: absolute;
-  top: calc(100% + 10px);
-  left: 0;
+  right: 0;
+  top: 100%;
+  margin-top: 8px;
   min-width: 200px;
   padding: 12px;
-  display: flex;
+  display: none;
   flex-direction: column;
   gap: 10px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)), var(--gem-surface);
@@ -235,6 +224,13 @@ summary::-webkit-details-marker {
   border-radius: 16px;
   box-shadow: var(--gem-shadow);
   z-index: 20;
+}
+
+.dropdown.open > .menu,
+.dropdown.open > .dropdown-menu,
+.dropdown[open] > .menu,
+.dropdown[open] > .dropdown-menu {
+  display: flex;
 }
 
 .dropdown .menu hr {
@@ -248,6 +244,31 @@ summary::-webkit-details-marker {
   align-items: center;
   gap: 8px;
   font-size: 0.85rem;
+}
+
+.dropdown .menu .menu-item {
+  width: 100%;
+  text-align: left;
+  background: linear-gradient(180deg, var(--gem-surface-2), var(--gem-surface));
+  border: 1px solid var(--gem-border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  color: var(--gem-text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: transform var(--trans), box-shadow var(--trans), border var(--trans), background var(--trans);
+}
+
+.dropdown .menu .menu-item:hover,
+.dropdown .menu .menu-item:focus-visible,
+.dropdown .menu .menu-item.active {
+  box-shadow: var(--gem-glow);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.dropdown .menu .menu-item.active {
+  border-color: rgba(139, 92, 246, 0.45);
 }
 
 .dropdown .menu button {

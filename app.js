@@ -6,6 +6,7 @@ const state = {
   lookupEntries: [],
   lookupMap: new Map(),
   nameToId: new Map(),
+  isolatedMode: 'cluster',
   filters: {
     Field: true,
     CalculatedField: true,
@@ -61,7 +62,7 @@ try {
   console.warn('bilkent registration failed', error);
 }
 
-const layoutName = typeof hasBilkent !== 'undefined' && hasBilkent ? 'cose-bilkent' : 'cose';
+const layoutName = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
 
 function getEl(...ids) {
   for (const id of ids) {
@@ -89,8 +90,8 @@ function bindUI() {
   const fitBtn = getEl('fitBtn', 'fit-btn');
   const layoutBtn = getEl('layoutBtn', 'layout-btn');
   const hopSelect = getEl('hopSelect');
-  const isolatedModeSelect = getEl('isolatedMode');
-  const hideIsolatedBtn = getEl('hideIsolatedBtn', 'hide-isolated-btn');
+  const isoBtn = getEl('isolatedBtn');
+  const isoMenu = getEl('isolatedMenu');
   const themeToggle = getEl('themeBtn', 'theme-toggle');
   const searchForm = getEl('search-form');
   const searchBox = getEl('search', 'search-box');
@@ -176,12 +177,16 @@ function bindUI() {
       if (!state.cy) return;
       state.cy.elements().removeClass('faded');
       fitGraph();
+      breathe('soft');
     });
   }
 
   if (layoutBtn) {
     layoutBtn.addEventListener('click', () => {
-      runAutoLayout();
+      const ran = breathe('full');
+      if (!ran) {
+        runAutoLayout('full');
+      }
     });
   }
 
@@ -194,19 +199,33 @@ function bindUI() {
     });
   }
 
-  if (hideIsolatedBtn) {
-    hideIsolatedBtn.addEventListener('click', () => {
-      hideIsolated();
-      fitGraph();
+  if (isoBtn && isoMenu) {
+    const isoWrapper = isoBtn.parentElement;
+    const setIsoOpen = (open) => {
+      if (!isoWrapper) return;
+      isoWrapper.classList.toggle('open', open);
+      isoBtn.setAttribute('aria-expanded', String(open));
+    };
+    isoBtn.setAttribute('aria-haspopup', 'menu');
+    isoBtn.setAttribute('aria-expanded', 'false');
+    isoBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      const isOpen = Boolean(isoWrapper && isoWrapper.classList.contains('open'));
+      setIsoOpen(!isOpen);
     });
-  }
-
-  if (isolatedModeSelect) {
-    isolatedModeSelect.addEventListener('change', () => {
-      applyIsolatedMode();
-      if (isolatedModeSelect.value === 'hide') {
-        nudge();
-        runAutoLayout('soft');
+    isoMenu.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-iso]');
+      if (!target) return;
+      const mode = target.dataset.iso;
+      if (!mode) return;
+      setIsoOpen(false);
+      setIsolatedMode(mode);
+      breathe('soft');
+    });
+    document.addEventListener('click', (event) => {
+      if (!isoWrapper) return;
+      if (!isoWrapper.contains(event.target)) {
+        setIsoOpen(false);
       }
     });
   }
@@ -316,6 +335,7 @@ function bindUI() {
     }
   });
 
+  setIsolatedMode(state.isolatedMode || 'cluster');
   updateFooter();
 }
 
@@ -348,7 +368,7 @@ function bootGraph() {
           'background-color': 'var(--gem-primary-2)',
           color: 'var(--gem-text)',
           label: 'data(name)',
-          'font-size': 11,
+          'font-size': '12px',
           'text-wrap': 'wrap',
           'text-valign': 'center',
           'text-halign': 'center',
@@ -357,6 +377,7 @@ function bootGraph() {
           'text-outline-width': 2.5,
           'text-overflow-wrap': 'ellipsis',
           'min-zoomed-font-size': 10,
+          'text-opacity': 0.95,
           'border-width': 1.5,
           'border-color': 'rgba(14, 11, 20, 0.45)',
           'overlay-opacity': 0,
@@ -433,15 +454,15 @@ function bootGraph() {
     ],
   });
 
-  const graphEl = () => state.cy && state.cy.container();
-  state.cy.on('mouseover', 'node', (e) => {
-    const el = graphEl();
+  state.cy.on('mouseover', 'node', (event) => {
+    const el = state.cy.container();
     if (el) {
-      el.title = e.target.data('name') || '';
+      el.title = event.target.data('name') || '';
     }
+    breathe('soft');
   });
   state.cy.on('mouseout', 'node', () => {
-    const el = graphEl();
+    const el = state.cy.container();
     if (el) {
       el.title = '';
     }
@@ -469,6 +490,11 @@ function bootGraph() {
   state.cy.on('tap', 'node', (event) => {
     const node = event.target;
     focusOnNode(node.id(), { depth: 1, center: true });
+    breathe('soft');
+  });
+
+  state.cy.on('select', 'node', () => {
+    breathe('soft');
   });
 
   state.cy.on('tap', (event) => {
@@ -1036,10 +1062,9 @@ function drawGraph(graph) {
   state.selectedNodeId = null;
   state.lastFocusDepth = 1;
 
-  nudge();
-  runAutoLayout('soft');
-  applyIsolatedMode();
+  setIsolatedMode('cluster');
   fitGraph();
+  breathe('full');
 }
 
 function applyFilters(options = {}) {
@@ -1068,9 +1093,8 @@ function applyFilters(options = {}) {
     return;
   }
 
-  nudge();
-  runAutoLayout('soft');
-  applyIsolatedMode();
+  setIsolatedMode(state.isolatedMode || 'cluster');
+  breathe('soft');
 }
 
 function expandNeighbors(depth) {
@@ -1106,20 +1130,8 @@ function expandNeighbors(depth) {
     }
   }
 
-  nudge();
-  runAutoLayout('soft');
-  applyIsolatedMode();
-}
-
-function hideIsolated() {
-  if (!state.cy) return;
-  const select = document.getElementById('isolatedMode');
-  if (select) {
-    select.value = 'hide';
-  }
-  applyIsolatedMode();
-  nudge();
-  runAutoLayout('soft');
+  setIsolatedMode(state.isolatedMode || 'cluster');
+  breathe('soft');
 }
 
 function fitGraph() {
@@ -1150,87 +1162,140 @@ function fitToElements(elements, padding = 80) {
 
 function runAutoLayout(mode) {
   if (!state.cy) return;
-  const soft = mode === 'soft';
-  const layout = state.cy.layout({
-    name: layoutName,
-    fit: true,
-    animate: 'end',
-    padding: 80,
-    randomize: false,
-    nodeRepulsion: soft ? 5200 : 8000,
-    idealEdgeLength: soft ? 150 : 180,
-    gravity: 0.25,
-    numIter: soft ? 1200 : 1800,
-    tile: true,
-  });
-  if (layout && typeof layout.run === 'function') {
-    layout.run();
-  }
+  const soft = mode !== 'full';
+  state.cy
+    .layout({
+      name: layoutName,
+      fit: true,
+      animate: 'end',
+      padding: 80,
+      randomize: false,
+      nodeRepulsion: soft ? 5200 : 8000,
+      idealEdgeLength: soft ? 150 : 180,
+      gravity: 0.25,
+      numIter: soft ? 1100 : 1700,
+      tile: true,
+    })
+    .run();
 }
 
 function nudge(eles) {
   if (!state.cy) return;
-  const targets = eles && typeof eles.positions === 'function'
-    ? eles
-    : state.cy.elements();
+  const targets = eles && typeof eles.positions === 'function' ? eles : state.cy.elements();
   if (!targets || !targets.length) return;
-  targets.positions((_, position) => ({
-    x: position.x + (Math.random() * 6 - 3),
-    y: position.y + (Math.random() * 6 - 3),
+  targets.positions((node, position) => ({
+    x: position.x + (Math.random() * 4 - 2),
+    y: position.y + (Math.random() * 4 - 2),
   }));
 }
 
 function getIsolated() {
-  if (!state.cy) return null;
+  if (!state.cy) {
+    return state.cy?.collection?.() || null;
+  }
   return state.cy.nodes().filter((node) => node.degree(false) === 0);
 }
 
-function applyIsolatedMode() {
-  if (!state.cy) return;
-  const mode = document.getElementById('isolatedMode')?.value || 'cluster';
-  const iso = getIsolated();
-  if (!iso) return;
+function syncIsolatedUI(mode) {
+  const labels = {
+    hide: 'Hide',
+    cluster: 'Cluster',
+    scatter: 'Scatter',
+    unhide: 'Unhide',
+  };
+  const resolved = labels[mode] ? mode : 'cluster';
+  const label = labels[resolved];
+  const btn = document.getElementById('isolatedBtn');
+  const menu = document.getElementById('isolatedMenu');
 
-  const isoCount = iso.length;
+  if (btn) {
+    btn.textContent = `Isolated: ${label} ▾`;
+    btn.setAttribute('data-mode', resolved);
+    btn.setAttribute('aria-label', `Isolated nodes: ${label}`);
+    btn.setAttribute('title', `Control isolated nodes (Current: ${label})`);
+  }
+
+  if (menu) {
+    menu.querySelectorAll('[data-iso]').forEach((item) => {
+      const active = item.dataset.iso === resolved;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+
+  return resolved;
+}
+
+function setIsolatedMode(mode) {
+  const resolved = syncIsolatedUI(mode || state.isolatedMode || 'cluster');
+  state.isolatedMode = resolved;
+
+  if (!state.cy) return;
+  const iso = getIsolated();
+  if (!iso || typeof iso.show !== 'function') return;
 
   iso.show();
 
-  if (mode === 'hide') {
+  if (resolved === 'hide') {
     iso.hide();
     return;
   }
 
-  if (mode === 'scatter') {
-    if (!isoCount) {
-      return;
-    }
+  if (resolved === 'unhide') {
+    iso.show();
+    runAutoLayout('soft');
+    return;
+  }
+
+  if (!iso.length) {
+    runAutoLayout('soft');
+    return;
+  }
+
+  if (resolved === 'scatter') {
     nudge(iso);
     runAutoLayout('soft');
     return;
   }
 
-  const allElements = state.cy.elements();
-  if (!allElements.length || !isoCount) {
-    return;
-  }
-
-  const bb = allElements.boundingBox();
-  const islandWidth = 360;
-  const islandHeight = 260;
-  const pad = 40;
+  const bb = state.cy.elements().boundingBox();
+  const pad = 60;
+  const islandW = 360;
+  const islandH = 260;
   const x1 = bb.x2 + pad;
-  const y1 = bb.y1;
-  const rows = Math.max(1, Math.ceil(Math.sqrt(isoCount)));
+  const y1 = Math.max(bb.y1, bb.y2 - islandH);
 
-  iso.layout({
-    name: 'grid',
-    boundingBox: { x1, y1, x2: x1 + islandWidth, y2: y1 + islandHeight },
-    avoidOverlap: true,
-    condense: true,
-    rows,
-  }).run();
+  iso
+    .layout({
+      name: 'grid',
+      boundingBox: { x1, y1, x2: x1 + islandW, y2: y1 + islandH },
+      avoidOverlap: true,
+      condense: true,
+      rows: Math.ceil(Math.sqrt(Math.max(1, iso.length))),
+    })
+    .run();
 
   runAutoLayout('soft');
+}
+
+let _breathBusy = false;
+let _breathLast = 0;
+function breathe(mode = 'soft') {
+  if (!state.cy) return false;
+  const now = Date.now();
+  if (now - _breathLast < 600) return false;
+  _breathLast = now;
+  if (_breathBusy) return false;
+  _breathBusy = true;
+
+  nudge(state.cy.elements());
+  runAutoLayout(mode);
+
+  setTimeout(() => {
+    _breathBusy = false;
+  }, mode === 'full' ? 650 : 350);
+
+  return true;
 }
 
 function getNeighborhood(node, depth = 1) {
@@ -1280,9 +1345,7 @@ function focusOnNode(id, options = {}) {
   syncListSelection(id);
 
   if (!options.skipRelayout) {
-    nudge();
-    runAutoLayout('soft');
-    applyIsolatedMode();
+    setIsolatedMode(state.isolatedMode || 'cluster');
   }
 }
 

@@ -45,12 +45,22 @@
           <option value="4">4 hops</option>
           <option value="5">5 hops</option>
         </select>
-        <button class="btn" id="hideIsolatedBtn" type="button">Hide isolated</button>
-        <select id="isolatedMode" title="How to display isolated nodes">
-          <option value="cluster" selected>Isolated: Cluster</option>
-          <option value="hide">Isolated: Hide</option>
-          <option value="scatter">Isolated: Scatter</option>
-        </select>
+        <div class="dropdown">
+          <button
+            id="isolatedBtn"
+            class="btn"
+            type="button"
+            title="Control isolated nodes"
+          >
+            Isolated ▾
+          </button>
+          <div id="isolatedMenu" class="menu">
+            <button class="menu-item" type="button" data-iso="hide">Hide</button>
+            <button class="menu-item" type="button" data-iso="cluster">Cluster</button>
+            <button class="menu-item" type="button" data-iso="scatter">Scatter</button>
+            <button class="menu-item" type="button" data-iso="unhide">Unhide</button>
+          </div>
+        </div>
         <details class="dropdown" id="filters-dropdown">
           <summary>Filters</summary>
           <div class="menu">
