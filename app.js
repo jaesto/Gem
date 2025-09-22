@@ -47,6 +47,13 @@ function themeColors() {
   };
 }
 
+function setLayoutStatus(name) {
+  const el = document.getElementById('layoutStatus');
+  if (el) {
+    el.textContent = `Layout: ${name}`;
+  }
+}
+
 function showError(msg, err) {
   const el = document.getElementById('errOverlay');
   if (!el) return;
@@ -93,11 +100,11 @@ function applyCyTheme() {
     {
       selector: 'node',
       style: {
-        label: 'data(name)',
         width: 'label',
         height: 'label',
         padding: '8px',
         shape: 'round-rectangle',
+        label: 'data(name)',
         'background-color': c.field,
         'font-size': '12px',
         color: c.text,
@@ -108,6 +115,9 @@ function applyCyTheme() {
         'text-overflow-wrap': 'ellipsis',
         'min-zoomed-font-size': 10,
         'text-opacity': 0.95,
+        'text-valign': 'center',
+        'text-halign': 'center',
+        'text-rotation': 'none',
         'z-index-compare': 'manual',
         'z-index': 10,
       },
@@ -120,23 +130,20 @@ function applyCyTheme() {
     {
       selector: 'edge',
       style: {
-        'z-index-compare': 'manual',
-        'z-index': 1,
-        'line-color': c.edge,
-        width: 1.8,
-        opacity: 0.95,
-        'curve-style': 'bezier',
-        'target-arrow-color': c.edge,
-        'target-arrow-shape': 'vee',
         label: 'data(rel)',
         'font-size': 9,
         color: c.text,
         'text-outline-color': c.outline,
         'text-outline-width': 2,
-        'text-background-color': 'rgba(0,0,0,0.25)',
-        'text-background-opacity': 0.35,
-        'text-background-padding': 2,
         'text-rotation': 'autorotate',
+        'line-color': '#a2a9b6',
+        'target-arrow-color': '#a2a9b6',
+        'target-arrow-shape': 'vee',
+        'curve-style': 'bezier',
+        width: 1.8,
+        opacity: 0.95,
+        'z-index-compare': 'manual',
+        'z-index': 1,
       },
     },
     { selector: ':selected', style: { 'border-width': 3, 'border-color': c.calc } },
@@ -272,10 +279,7 @@ function bindUI() {
 
   if (layoutBtn) {
     layoutBtn.addEventListener('click', () => {
-      const layout = runAutoLayout(() => fitAll(80));
-      if (!layout) {
-        fitAll(80);
-      }
+      runForceLayout();
     });
   }
 
@@ -400,6 +404,42 @@ function bindUI() {
     });
   }
 
+  const layoutMenuBtn = document.getElementById('layoutMenuBtn');
+  const layoutMenu = document.getElementById('layoutMenu');
+  if (layoutMenuBtn && layoutMenu) {
+    const dropdown = layoutMenuBtn.parentElement;
+    layoutMenuBtn.addEventListener('click', () => {
+      if (dropdown) {
+        dropdown.classList.toggle('open');
+      }
+    });
+    layoutMenu.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-layout]');
+      if (!target) return;
+      if (dropdown) {
+        dropdown.classList.remove('open');
+      }
+      const kind = target.dataset.layout;
+      if (kind === 'force') {
+        runForceLayout();
+      } else if (kind === 'grid') {
+        runGridLayout();
+      } else if (kind === 'hierarchy') {
+        runHierarchyLayout();
+      } else if (kind === 'centered') {
+        runCenteredHierarchyLayout();
+      } else if (kind === 'centered-selected') {
+        runCenteredFromSelectionLayout();
+      }
+    });
+    document.addEventListener('click', (event) => {
+      if (!dropdown) return;
+      if (!dropdown.contains(event.target)) {
+        dropdown.classList.remove('open');
+      }
+    });
+  }
+
   document.querySelectorAll('.tabs button').forEach((button) => {
     button.addEventListener('click', () => {
       document.querySelectorAll('.tabs button').forEach((b) => b.classList.remove('active'));
@@ -440,7 +480,7 @@ function bootGraph() {
 
   state.cy = cytoscape({
     container: graphContainerEl,
-    wheelSensitivity: 0.2,
+    wheelSensitivity: 0.35,
     autoungrabify: false,
     layout: {
       name: layoutName,
@@ -458,6 +498,24 @@ function bootGraph() {
 
   applyCyTheme();
 
+  state.cy.userPanningEnabled(true);
+  state.cy.userZoomingEnabled(true);
+  state.cy.boxSelectionEnabled(true);
+  state.cy.nodes().grabify();
+  state.cy.nodes().unlock();
+  state.cy.on('mouseover', 'node', () => {
+    const container = state.cy.container();
+    if (container) {
+      container.style.cursor = 'move';
+    }
+  });
+  state.cy.on('mouseout', 'node', () => {
+    const container = state.cy.container();
+    if (container) {
+      container.style.cursor = '';
+    }
+  });
+
   state.cy.on('mouseover', 'node', (event) => {
     const el = state.cy.container();
     if (el) {
@@ -470,6 +528,12 @@ function bootGraph() {
       el.title = '';
     }
   });
+  state.cy.on('select', 'node', (event) => {
+    const hood = event.target.closedNeighborhood();
+    state.cy.elements().removeClass('faded');
+    state.cy.elements().not(hood).addClass('faded');
+  });
+  state.cy.on('unselect', 'node', () => state.cy.elements().removeClass('faded'));
 
   if (state.graphResizeObserver) {
     try {
@@ -1068,6 +1132,9 @@ function drawGraph(graph) {
   state.cy.add(edgeEles);
   state.cy.endBatch();
 
+  state.cy.nodes().grabify();
+  state.cy.nodes().unlock();
+
   state.cy.nodes().show();
   state.cy.edges().show();
 
@@ -1085,6 +1152,7 @@ function drawGraph(graph) {
   }
 
   fitAll(100);
+  setLayoutStatus('Auto');
 
   console.log('Graph ready:', state.cy.nodes().length, 'nodes /', state.cy.edges().length, 'edges');
 }
@@ -1166,43 +1234,127 @@ function fitToElements(elements, padding = 80) {
   }
 }
 
-function runAutoLayout(onStop) {
-  if (!state.cy) return null;
-  const layout = state.cy.layout({
-    name: layoutName,
-    fit: false,
-    animate: false,
-    padding: 80,
-    randomize: false,
-    nodeRepulsion: 5200,
-    idealEdgeLength: 180,
-    gravity: 0.25,
-    numIter: 1600,
-    tile: true,
+function runForceLayout() {
+  if (!state.cy) return;
+  const nm = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
+  state.cy
+    .layout({
+      name: nm,
+      fit: true,
+      animate: 'end',
+      padding: 80,
+      randomize: false,
+      ungrabifyWhileSimulating: false,
+    })
+    .run();
+  state.cy.nodes().unlock();
+  state.cy.nodes().grabify();
+  setLayoutStatus('Force');
+}
+
+function runGridLayout() {
+  if (!state.cy) return;
+  state.cy.layout({ name: 'grid', fit: true, avoidOverlap: true, condense: true, padding: 80 }).run();
+  state.cy.nodes().unlock();
+  state.cy.nodes().grabify();
+  setLayoutStatus('Grid');
+}
+
+function runHierarchyLayout() {
+  if (!state.cy) return;
+  const roots = state.cy.$('node[type = "Dashboard"]').length
+    ? state.cy.$('node[type = "Dashboard"]')
+    : state.cy.$('node[type = "Worksheet"]');
+  state.cy
+    .layout({
+      name: 'breadthfirst',
+      directed: true,
+      circle: false,
+      spacingFactor: 1.2,
+      padding: 100,
+      fit: true,
+      animate: 'end',
+      roots,
+    })
+    .run();
+  state.cy.nodes().unlock();
+  state.cy.nodes().grabify();
+  setLayoutStatus('Hierarchy');
+}
+
+function runCenteredHierarchyLayout() {
+  if (!state.cy) return;
+  const rank = { Dashboard: 3, Worksheet: 2, Field: 1, CalculatedField: 1, Parameter: 1 };
+  const r = (n) => rank[n.data('type')] ?? 1;
+  state.cy
+    .layout({
+      name: 'concentric',
+      fit: true,
+      padding: 100,
+      concentric: (n) => r(n),
+      levelWidth: () => 1,
+      minNodeSpacing: 22,
+      startAngle: 1.5 * Math.PI,
+      sweep: 2 * Math.PI,
+      animate: 'end',
+    })
+    .run();
+  state.cy.nodes().unlock();
+  state.cy.nodes().grabify();
+  setLayoutStatus('Centered');
+}
+
+function runCenteredFromSelectionLayout() {
+  if (!state.cy) return;
+  const cy = state.cy;
+  let root = cy.$('node:selected[type = "Dashboard"]').first();
+  if (!root.nonempty()) {
+    root = cy.$('node:selected').first();
+  }
+  if (!root.nonempty()) {
+    root = cy.$('node[type = "Dashboard"]').first();
+  }
+  if (!root.nonempty()) {
+    root = cy.$('node[type = "Worksheet"]').first();
+  }
+  if (!root.nonempty()) {
+    root = cy.nodes().first();
+  }
+  if (!root || !root.nonempty()) {
+    setLayoutStatus('Centered (no root)');
+    return;
+  }
+
+  const dist = Object.create(null);
+  cy.elements().bfs({
+    roots: root,
+    directed: true,
+    visit: (v, e, u, i, depth) => {
+      dist[v.id()] = depth;
+    },
+  });
+  const maxD = Math.max(0, ...Object.values(dist));
+  cy.nodes().forEach((n) => {
+    if (dist[n.id()] == null) dist[n.id()] = maxD + 1;
   });
 
-  state.activeLayout = layout;
-
-  const clearActive = () => {
-    if (state.activeLayout === layout) {
-      state.activeLayout = null;
-    }
-    if (typeof onStop === 'function') {
-      onStop();
-    }
-  };
-
-  if (layout && typeof layout.one === 'function') {
-    layout.one('layoutstop', clearActive);
-  } else if (layout && typeof layout.on === 'function') {
-    layout.on('layoutstop', clearActive);
-  }
-
-  layout.run();
-  if (!(layout && (typeof layout.one === 'function' || typeof layout.on === 'function'))) {
-    clearActive();
-  }
-  return layout;
+  const maxD2 = Math.max(...Object.values(dist));
+  cy
+    .layout({
+      name: 'concentric',
+      fit: true,
+      padding: 100,
+      concentric: (n) => maxD2 - dist[n.id()],
+      levelWidth: () => 1,
+      minNodeSpacing: 22,
+      startAngle: 1.5 * Math.PI,
+      sweep: 2 * Math.PI,
+      animate: 'end',
+    })
+    .run();
+  cy.nodes().unlock();
+  cy.nodes().grabify();
+  setLayoutStatus(`Centered from “${root.data('name') || root.id()}”`);
 }
 
 function syncIsolatedUI(mode) {
