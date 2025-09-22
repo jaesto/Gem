@@ -82,10 +82,9 @@ function bindUI() {
   const dropZone = getEl('dropZone', 'dropzone');
   const fitBtn = getEl('fitBtn', 'fit-btn');
   const layoutBtn = getEl('layoutBtn', 'layout-btn');
-  const expand1Btn = getEl('expand1Btn', 'expand-1-btn');
-  const expand2Btn = getEl('expand2Btn', 'expand-2-btn');
+  const hopSelect = getEl('hopSelect');
   const hideIsolatedBtn = getEl('hideIsolatedBtn', 'hide-isolated-btn');
-  const themeToggle = getEl('theme-toggle');
+  const themeToggle = getEl('themeBtn', 'theme-toggle');
   const searchForm = getEl('search-form');
   const searchBox = getEl('search', 'search-box');
   const filtersDropdown = getEl('filtersDropdown', 'filters-dropdown');
@@ -179,15 +178,12 @@ function bindUI() {
     });
   }
 
-  if (expand1Btn) {
-    expand1Btn.addEventListener('click', () => {
-      expandNeighbors(1);
-    });
-  }
-
-  if (expand2Btn) {
-    expand2Btn.addEventListener('click', () => {
-      expandNeighbors(2);
+  if (hopSelect) {
+    hopSelect.addEventListener('change', () => {
+      const value = parseInt(hopSelect.value, 10);
+      if (!Number.isNaN(value)) {
+        expandNeighbors(value);
+      }
     });
   }
 
@@ -458,14 +454,9 @@ function bootGraph() {
 }
 
 function setStatus(text) {
-  const targets = [
-    document.getElementById('status'),
-    document.getElementById('status-text'),
-  ].filter(Boolean);
-  if (!targets.length) return;
-  targets.forEach((el) => {
-    el.textContent = text;
-  });
+  const statusEl = document.getElementById('status');
+  if (!statusEl) return;
+  statusEl.textContent = text;
 }
 
 async function handleFile(file) {
@@ -1048,13 +1039,37 @@ function applyFilters(options = {}) {
 
 function expandNeighbors(depth) {
   if (!state.cy) return;
+  const hopSelect = document.getElementById('hopSelect');
+  let resolvedDepth = Number.isFinite(depth) ? depth : null;
+
+  if (!resolvedDepth && hopSelect) {
+    const selectValue = parseInt(hopSelect.value, 10);
+    if (!Number.isNaN(selectValue)) {
+      resolvedDepth = selectValue;
+    }
+  }
+
+  if (!resolvedDepth || Number.isNaN(resolvedDepth)) {
+    resolvedDepth = 1;
+  }
+
+  resolvedDepth = Math.max(1, Math.min(Math.round(resolvedDepth), 5));
+
   const selected = state.cy.$('node:selected');
   if (!selected.length) {
     setStatus('Select a node first to expand neighbors');
     return;
   }
   const node = selected[0];
-  focusOnNode(node.id(), { depth, center: true });
+  focusOnNode(node.id(), { depth: resolvedDepth, center: true });
+
+  if (hopSelect && hopSelect.value !== String(resolvedDepth)) {
+    const hasOption = Array.from(hopSelect.options).some((option) => option.value === String(resolvedDepth));
+    if (hasOption) {
+      hopSelect.value = String(resolvedDepth);
+    }
+  }
+
   nudgeLayout();
 }
 
@@ -1286,6 +1301,16 @@ function focusOnNode(id, options = {}) {
 
   state.selectedNodeId = id;
   state.lastFocusDepth = depth;
+
+  const hopSelect = document.getElementById('hopSelect');
+  if (hopSelect) {
+    const normalizedDepth = Math.max(1, Math.min(Math.round(Number.isFinite(depth) ? depth : 1), 5));
+    const depthValue = String(normalizedDepth);
+    const hasOption = Array.from(hopSelect.options).some((option) => option.value === depthValue);
+    if (hasOption && hopSelect.value !== depthValue) {
+      hopSelect.value = depthValue;
+    }
+  }
 
   if (options.center !== false) {
     fitToElements(neighborhood, options.fitPadding ?? 120);

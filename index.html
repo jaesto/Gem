@@ -19,30 +19,32 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <header class="toolbar topbar">
-      <div class="toolbar-left">
-        <a class="brand" href="./" aria-label="Gem home">
-          <span class="brand-logo" aria-hidden="true">
-            <svg width="28" height="28" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="g1" x1="0" x2="1" y1="0" y2="1">
-                  <stop offset="0%" stop-color="#A78BFA" /><stop offset="100%" stop-color="#6D28D9" />
-                </linearGradient>
-              </defs>
-              <rect width="256" height="256" rx="28" fill="#0E0B14" />
-              <path d="M128 20 L236 82 V174 L128 236 L20 174 V82 Z" fill="url(#g1)" />
-              <path d="M128 20 L236 82 L128 128 L20 82 Z" fill="#8B5CF6" opacity=".35" />
-              <path d="M128 128 L236 82 V174 L128 236 Z" fill="#6D28D9" opacity=".45" />
-              <path d="M128 128 L20 82 V174 L128 236 Z" fill="#C084FC" opacity=".25" />
-            </svg>
-          </span>
+    <header class="topbar">
+      <div class="topbar-left">
+        <a class="brand" href="./">
+          <img id="brandLogo" alt="Gem" />
           <span class="brand-name">Gem</span>
         </a>
         <button class="btn" id="openBtn" type="button">Open Workbook</button>
-        <button class="btn" id="fitBtn" type="button">Fit</button>
-        <button class="btn" id="layoutBtn" type="button">Auto layout</button>
-        <button class="btn" id="expand1Btn" type="button" title="Show 1-hop neighbors">Expand 1-hop</button>
-        <button class="btn" id="expand2Btn" type="button" title="Show 2-hop neighbors">Expand 2-hop</button>
+      </div>
+      <div class="topbar-center">
+        <form id="search-form" role="search">
+          <label for="search" class="visually-hidden">Search nodes</label>
+          <input id="search" name="q" type="search" placeholder="Search..." list="node-names" autocomplete="off" />
+          <datalist id="node-names"></datalist>
+        </form>
+      </div>
+      <div class="topbar-right">
+        <button class="btn" id="fitBtn" type="button" title="Zoom to the visible graph">Fit</button>
+        <button class="btn" id="layoutBtn" type="button" title="Re-run the layout to spread nodes">Auto layout</button>
+        <label for="hopSelect" class="visually-hidden">Expand neighbors hops</label>
+        <select id="hopSelect" title="Expand neighbors this many hops">
+          <option value="1">1 hop</option>
+          <option value="2">2 hops</option>
+          <option value="3">3 hops</option>
+          <option value="4">4 hops</option>
+          <option value="5">5 hops</option>
+        </select>
         <button class="btn" id="hideIsolatedBtn" type="button">Hide isolated</button>
         <details class="dropdown" id="filters-dropdown">
           <summary>Filters</summary>
@@ -66,14 +68,7 @@
             <button class="btn" type="button" data-export="dot">lineage.dot</button>
           </div>
         </details>
-      </div>
-      <div class="toolbar-right">
-        <button class="btn" id="theme-toggle" type="button" aria-pressed="true">Dark</button>
-        <form id="search-form" role="search">
-          <label for="search" class="visually-hidden">Search nodes</label>
-          <input id="search" name="q" type="search" placeholder="Search..." list="node-names" autocomplete="off" />
-          <datalist id="node-names"></datalist>
-        </form>
+        <button class="btn" id="themeBtn" type="button" aria-pressed="true">Dark</button>
       </div>
     </header>
 
@@ -115,12 +110,43 @@
     </main>
 
     <footer class="status-bar">
-      <span id="status-text">Ready.</span>
       <span id="footer-info"></span>
     </footer>
 
     <div id="errOverlay"></div>
 
+    <script>
+      (function () {
+        const logoEl = document.getElementById('brandLogo');
+        if (!logoEl) return;
+        const pngPath = './assets/gem-logo.png';
+        const fallbackSvg = `
+          <svg width="28" height="28" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="gemLogoGradient" x1="0" x2="1" y1="0" y2="1">
+                <stop offset="0%" stop-color="#A78BFA" /><stop offset="100%" stop-color="#6D28D9" />
+              </linearGradient>
+            </defs>
+            <rect width="256" height="256" rx="28" fill="#0E0B14" />
+            <path d="M128 20 L236 82 V174 L128 236 L20 174 V82 Z" fill="url(#gemLogoGradient)" />
+            <path d="M128 20 L236 82 L128 128 L20 82 Z" fill="#8B5CF6" opacity=".35" />
+            <path d="M128 128 L236 82 V174 L128 236 Z" fill="#6D28D9" opacity=".45" />
+            <path d="M128 128 L20 82 V174 L128 236 Z" fill="#C084FC" opacity=".25" />
+          </svg>`;
+
+        const swapToFallback = () => {
+          const span = document.createElement('span');
+          span.className = 'brand-logo-fallback';
+          span.setAttribute('aria-hidden', 'true');
+          span.innerHTML = fallbackSvg;
+          logoEl.replaceWith(span);
+        };
+
+        logoEl.decoding = 'async';
+        logoEl.addEventListener('error', swapToFallback, { once: true });
+        logoEl.src = pngPath;
+      })();
+    </script>
     <script src="./lib/jszip.min.js"></script>
     <script src="./lib/cytoscape.min.js"></script>
     <script src="./lib/cytoscape-cose-bilkent.min.js"></script> <!-- keep if present -->
