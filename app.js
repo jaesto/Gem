@@ -47,11 +47,9 @@ function themeColors() {
   };
 }
 
-function setLayoutStatus(name) {
-  const el = document.getElementById('layoutStatus');
-  if (el) {
-    el.textContent = `Layout: ${name}`;
-  }
+function setLayoutButton(label) {
+  const btn = document.getElementById('layoutMenuBtn');
+  if (btn) btn.textContent = `Layout: ${label} ▾`;
 }
 
 function showError(msg, err) {
@@ -100,13 +98,11 @@ function applyCyTheme() {
     {
       selector: 'node',
       style: {
-        width: 'label',
-        height: 'label',
-        padding: '8px',
-        shape: 'round-rectangle',
         label: 'data(name)',
-        'background-color': c.field,
         'font-size': '12px',
+        'text-valign': 'center',
+        'text-halign': 'center',
+        'text-rotation': 'none',
         color: c.text,
         'text-outline-color': c.outline,
         'text-outline-width': 2,
@@ -115,9 +111,12 @@ function applyCyTheme() {
         'text-overflow-wrap': 'ellipsis',
         'min-zoomed-font-size': 10,
         'text-opacity': 0.95,
-        'text-valign': 'center',
-        'text-halign': 'center',
-        'text-rotation': 'none',
+        shape: 'round-rectangle',
+        width: 'label',
+        height: 'label',
+        padding: '8px',
+        'border-width': 0,
+        'background-color': c.field,
         'z-index-compare': 'manual',
         'z-index': 10,
       },
@@ -400,42 +399,6 @@ function bindUI() {
         if (query) {
           jumpToNode(query);
         }
-      }
-    });
-  }
-
-  const layoutMenuBtn = document.getElementById('layoutMenuBtn');
-  const layoutMenu = document.getElementById('layoutMenu');
-  if (layoutMenuBtn && layoutMenu) {
-    const dropdown = layoutMenuBtn.parentElement;
-    layoutMenuBtn.addEventListener('click', () => {
-      if (dropdown) {
-        dropdown.classList.toggle('open');
-      }
-    });
-    layoutMenu.addEventListener('click', (event) => {
-      const target = event.target.closest('[data-layout]');
-      if (!target) return;
-      if (dropdown) {
-        dropdown.classList.remove('open');
-      }
-      const kind = target.dataset.layout;
-      if (kind === 'force') {
-        runForceLayout();
-      } else if (kind === 'grid') {
-        runGridLayout();
-      } else if (kind === 'hierarchy') {
-        runHierarchyLayout();
-      } else if (kind === 'centered') {
-        runCenteredHierarchyLayout();
-      } else if (kind === 'centered-selected') {
-        runCenteredFromSelectionLayout();
-      }
-    });
-    document.addEventListener('click', (event) => {
-      if (!dropdown) return;
-      if (!dropdown.contains(event.target)) {
-        dropdown.classList.remove('open');
       }
     });
   }
@@ -1152,7 +1115,7 @@ function drawGraph(graph) {
   }
 
   fitAll(100);
-  setLayoutStatus('Auto');
+  setLayoutButton('Auto');
 
   console.log('Graph ready:', state.cy.nodes().length, 'nodes /', state.cy.edges().length, 'edges');
 }
@@ -1249,7 +1212,7 @@ function runForceLayout() {
     .run();
   state.cy.nodes().unlock();
   state.cy.nodes().grabify();
-  setLayoutStatus('Force');
+  setLayoutButton('Force');
 }
 
 function runGridLayout() {
@@ -1257,7 +1220,7 @@ function runGridLayout() {
   state.cy.layout({ name: 'grid', fit: true, avoidOverlap: true, condense: true, padding: 80 }).run();
   state.cy.nodes().unlock();
   state.cy.nodes().grabify();
-  setLayoutStatus('Grid');
+  setLayoutButton('Grid');
 }
 
 function runHierarchyLayout() {
@@ -1279,7 +1242,7 @@ function runHierarchyLayout() {
     .run();
   state.cy.nodes().unlock();
   state.cy.nodes().grabify();
-  setLayoutStatus('Hierarchy');
+  setLayoutButton('Hierarchy');
 }
 
 function runCenteredHierarchyLayout() {
@@ -1301,7 +1264,7 @@ function runCenteredHierarchyLayout() {
     .run();
   state.cy.nodes().unlock();
   state.cy.nodes().grabify();
-  setLayoutStatus('Centered');
+  setLayoutButton('Centered');
 }
 
 function runCenteredFromSelectionLayout() {
@@ -1321,7 +1284,7 @@ function runCenteredFromSelectionLayout() {
     root = cy.nodes().first();
   }
   if (!root || !root.nonempty()) {
-    setLayoutStatus('Centered (no root)');
+    setLayoutButton('Centered (no root)');
     return;
   }
 
@@ -1354,8 +1317,43 @@ function runCenteredFromSelectionLayout() {
     .run();
   cy.nodes().unlock();
   cy.nodes().grabify();
-  setLayoutStatus(`Centered from “${root.data('name') || root.id()}”`);
+  const rootName = root?.data('name') || root?.id() || 'Selection';
+  setLayoutButton(`Centered from ${rootName}`);
 }
+
+(function bindLayoutMenu() {
+  const dd = document.getElementById('layoutDropdown');
+  const btn = document.getElementById('layoutMenuBtn');
+  const menu = document.getElementById('layoutMenu');
+  if (!dd || !btn || !menu) return;
+
+  const close = () => {
+    dd.classList.remove('open');
+    btn.setAttribute('aria-expanded', 'false');
+  };
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dd.classList.toggle('open');
+    btn.setAttribute('aria-expanded', dd.classList.contains('open') ? 'true' : 'false');
+  });
+
+  menu.addEventListener('click', (e) => {
+    const item = e.target.closest('[data-layout]');
+    if (!item) return;
+    const kind = item.dataset.layout;
+    close();
+    if (kind === 'force') runForceLayout();
+    else if (kind === 'grid') runGridLayout();
+    else if (kind === 'hierarchy') runHierarchyLayout();
+    else if (kind === 'centered') runCenteredHierarchyLayout();
+    else if (kind === 'centered-selected') runCenteredFromSelectionLayout();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!dd.contains(e.target)) close();
+  });
+})();
 
 function syncIsolatedUI(mode) {
   const labels = {
