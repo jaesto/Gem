@@ -1,6 +1,6 @@
 :root {
-  --topbar-h: 48px;
-  --footer-h: 0px;
+  --topbar-h: 42px;
+  --footer-h: 40px;
   --gem-bg: #0E0B14;
   --gem-surface: #151827;
   --gem-surface-2: #1b2030;
@@ -20,6 +20,7 @@
   --pad: 10px;
   --trans: 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
   --font-stack: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  --label-outline: rgba(0, 0, 0, 0.65);
 }
 
 html.light,
@@ -36,6 +37,7 @@ html.light,
   --gem-accent: #B794F4;
   --gem-shadow: 0 12px 26px rgba(0, 0, 0, 0.12);
   --gem-glow: 0 0 0 2px rgba(124, 58, 237, 0.2), 0 12px 28px rgba(124, 58, 237, 0.18);
+  --label-outline: rgba(255, 255, 255, 0.75);
 }
 
 * {
@@ -45,8 +47,10 @@ html.light,
 body {
   margin: 0;
   min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   font-family: var(--font-stack);
   background:
     radial-gradient(1200px 600px at 20% -10%, rgba(124, 58, 237, 0.25), transparent 60%),
@@ -81,47 +85,37 @@ summary {
   backdrop-filter: blur(24px);
 }
 
-header.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  display: flex;
+.topbar {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 16px;
-  height: var(--topbar-h);
+  height: 42px;
+  padding: 4px 10px;
   background: var(--gem-surface);
   border-bottom: 1px solid var(--gem-border);
-  flex-wrap: wrap;
-  row-gap: 8px;
-  width: 100%;
-  box-sizing: border-box;
+  box-shadow: none;
+  border-radius: 0;
+  column-gap: 16px;
+  position: relative;
+  z-index: 15;
+  flex-shrink: 0;
 }
 
-.topbar-left,
-.topbar-right {
+.topbar .left,
+.topbar .center,
+.topbar .right {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.topbar-left {
-  flex-wrap: wrap;
+  gap: 8px;
   min-width: 0;
 }
 
-.topbar-center {
-  flex: 1;
-  display: flex;
+.topbar .center {
   justify-content: center;
-  min-width: 0;
 }
 
-.topbar-right {
-  flex-wrap: wrap;
+.topbar .right {
   justify-content: flex-end;
-  min-width: 0;
 }
 
 .brand {
@@ -167,9 +161,9 @@ header.topbar {
   background: linear-gradient(180deg, var(--gem-surface-2), var(--gem-surface));
   border: 1px solid var(--gem-border);
   border-radius: 999px;
-  padding: 6px 10px;
+  padding: 5px 10px;
   color: var(--gem-text);
-  font-size: 0.9rem;
+  font-size: 13px;
   cursor: pointer;
   transition: transform var(--trans), box-shadow var(--trans), background var(--trans), border var(--trans);
 }
@@ -185,13 +179,14 @@ summary {
   list-style: none;
   cursor: pointer;
   border-radius: 999px;
-  padding: 6px 10px;
+  padding: 5px 10px;
   border: 1px solid var(--gem-border);
   background: linear-gradient(180deg, var(--gem-surface-2), var(--gem-surface));
   transition: border var(--trans), box-shadow var(--trans);
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  font-size: 13px;
 }
 
 .dropdown {
@@ -255,9 +250,10 @@ summary::-webkit-details-marker {
 #search-form {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   width: 100%;
-  max-width: 420px;
+  max-width: 520px;
+  margin: 0;
 }
 
 #search {
@@ -265,11 +261,12 @@ summary::-webkit-details-marker {
   border: 1px solid var(--gem-border);
   border-radius: 999px;
   color: var(--gem-text);
-  padding: 6px 12px;
-  min-width: 220px;
-  max-width: 420px;
+  padding: 4px 12px;
+  min-width: 260px;
+  max-width: 520px;
   width: 100%;
   transition: border var(--trans), box-shadow var(--trans);
+  height: 30px;
 }
 
 #search:focus {
@@ -279,20 +276,22 @@ summary::-webkit-details-marker {
 
 #hopSelect {
   appearance: none;
-  background: linear-gradient(180deg, var(--gem-surface-2), var(--gem-surface));
-  border: 1px solid var(--gem-border);
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding: 6px 24px 6px 10px;
   border-radius: 999px;
-  padding: 6px 32px 6px 12px;
+  border: 1px solid var(--gem-border);
+  background: var(--gem-surface);
   color: var(--gem-text);
-  font-size: 0.9rem;
+  font-size: 13px;
   cursor: pointer;
-  min-width: 132px;
+  min-width: 124px;
   line-height: 1.2;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='none' stroke='%23A78BFA' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 12px center;
+  background-position: right 10px center;
   background-size: 12px;
-  transition: border var(--trans), box-shadow var(--trans);
+  transition: border var(--trans), box-shadow var(--trans), background var(--trans);
 }
 
 #hopSelect:focus {
@@ -310,6 +309,8 @@ summary::-webkit-details-marker {
   gap: 12px;
   height: calc(100vh - var(--topbar-h) - var(--footer-h));
   padding: 16px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -335,7 +336,7 @@ summary::-webkit-details-marker {
 .graphwrap {
   grid-area: graph;
   position: relative;
-  min-height: 540px;
+  min-height: 0;
   height: 100%;
   min-width: 360px;
   overflow: hidden;
@@ -489,16 +490,16 @@ summary::-webkit-details-marker {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
-  margin: 0 16px 16px;
-  padding: 12px 18px;
-  min-height: var(--footer-h);
+  gap: 12px;
+  margin: 0;
+  padding: 0 16px;
+  height: var(--footer-h);
   font-size: 0.85rem;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)), var(--gem-surface);
-  border: 1px solid var(--gem-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--gem-shadow);
-  backdrop-filter: blur(20px);
+  background: var(--gem-surface);
+  border-top: 1px solid var(--gem-border);
+  border-radius: 0;
+  box-shadow: none;
+  flex-shrink: 0;
 }
 
 .status-bar span:last-child {
@@ -543,22 +544,26 @@ summary::-webkit-details-marker {
 }
 
 @media (max-width: 980px) {
-  header.topbar {
+  .topbar {
+    grid-template-columns: 1fr;
     height: auto;
+    row-gap: 8px;
   }
 
-  .topbar-left,
-  .topbar-right,
-  .topbar-center {
+  .topbar .left,
+  .topbar .center,
+  .topbar .right {
     width: 100%;
-  }
-
-  .topbar-center {
     justify-content: center;
+    flex-wrap: wrap;
   }
 
-  .topbar-right {
-    justify-content: flex-start;
+  .topbar .left {
+    justify-content: space-between;
+  }
+
+  .topbar .right {
+    justify-content: center;
   }
 }
 
@@ -585,10 +590,11 @@ summary::-webkit-details-marker {
     width: 100%;
   }
 
-  .topbar-left,
-  .topbar-right {
+  .topbar .left,
+  .topbar .right {
     width: 100%;
-    justify-content: space-between;
+    justify-content: center;
+    gap: 6px;
   }
 }
 

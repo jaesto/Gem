@@ -20,21 +20,21 @@
   </head>
   <body>
     <header class="topbar">
-      <div class="topbar-left">
+      <div class="left">
         <a class="brand" href="./">
           <img id="brandLogo" alt="Gem" />
           <span class="brand-name">Gem</span>
         </a>
         <button class="btn" id="openBtn" type="button">Open Workbook</button>
       </div>
-      <div class="topbar-center">
+      <div class="center">
         <form id="search-form" role="search">
           <label for="search" class="visually-hidden">Search nodes</label>
           <input id="search" name="q" type="search" placeholder="Search..." list="node-names" autocomplete="off" />
           <datalist id="node-names"></datalist>
         </form>
       </div>
-      <div class="topbar-right">
+      <div class="right">
         <button class="btn" id="fitBtn" type="button" title="Zoom to the visible graph">Fit</button>
         <button class="btn" id="layoutBtn" type="button" title="Re-run the layout to spread nodes">Auto layout</button>
         <label for="hopSelect" class="visually-hidden">Expand neighbors hops</label>
