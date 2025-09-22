@@ -6,7 +6,7 @@ const state = {
   lookupEntries: [],
   lookupMap: new Map(),
   nameToId: new Map(),
-  isolatedMode: 'cluster',
+  isolatedMode: 'unhide',
   activeLayout: null,
   filters: {
     Field: true,
@@ -30,8 +30,8 @@ function cssVar(name, fallback) {
   if (typeof window === 'undefined' || !window.getComputedStyle) {
     return fallback;
   }
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return value || fallback;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
 }
 
 function themeColors() {
@@ -89,14 +89,7 @@ const layoutName = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bil
 function applyCyTheme() {
   if (!state.cy) return;
   const c = themeColors();
-  const style = [
-    {
-      selector: 'core',
-      style: {
-        'selection-box-color': '#8B5CF6',
-        'selection-box-border-color': '#8B5CF6',
-      },
-    },
+  state.cy.style([
     {
       selector: 'node',
       style: {
@@ -111,14 +104,10 @@ function applyCyTheme() {
         'text-outline-color': c.outline,
         'text-outline-width': 2,
         'text-wrap': 'wrap',
-        'text-max-width': '140px',
+        'text-max-width': '160px',
         'text-overflow-wrap': 'ellipsis',
         'min-zoomed-font-size': 10,
         'text-opacity': 0.95,
-        'text-valign': 'center',
-        'text-halign': 'center',
-        'overlay-opacity': 0,
-        'border-width': 0,
         'z-index-compare': 'manual',
         'z-index': 10,
       },
@@ -134,8 +123,8 @@ function applyCyTheme() {
         'z-index-compare': 'manual',
         'z-index': 1,
         'line-color': c.edge,
-        opacity: 0.95,
         width: 1.8,
+        opacity: 0.95,
         'curve-style': 'bezier',
         'target-arrow-color': c.edge,
         'target-arrow-shape': 'vee',
@@ -152,32 +141,17 @@ function applyCyTheme() {
     },
     { selector: ':selected', style: { 'border-width': 3, 'border-color': c.calc } },
     { selector: '.faded', style: { opacity: 0.18 } },
-  ];
-  state.cy.style(style);
+  ]);
 }
 
 function fitAll(pad = 80) {
   if (!state.cy) return;
-  const doFit = () => {
-    if (!state.cy) return;
-    const active = state.activeLayout;
-    if (active && active.running) {
-      state.cy.once('layoutstop', () => requestAnimationFrame(doFit));
-      return;
-    }
+  requestAnimationFrame(() => {
     const vis = state.cy.elements().filter(':visible');
     if (vis.length > 0) {
-      state.cy.resize();
       state.cy.fit(vis, pad);
     }
-  };
-
-  const layout = state.activeLayout;
-  if (layout && layout.running) {
-    state.cy.once('layoutstop', () => requestAnimationFrame(doFit));
-  } else {
-    requestAnimationFrame(doFit);
-  }
+  });
 }
 
 function getEl(...ids) {
@@ -293,16 +267,15 @@ function bindUI() {
       if (!state.cy) return;
       state.cy.elements().removeClass('faded');
       fitAll(80);
-      breathe('soft');
     });
   }
 
   if (layoutBtn) {
     layoutBtn.addEventListener('click', () => {
-      runAutoLayout('soft');
-      setIsolatedMode(state.isolatedMode || 'cluster');
-      fitAll(80);
-      breathe('soft');
+      const layout = runAutoLayout(() => fitAll(80));
+      if (!layout) {
+        fitAll(80);
+      }
     });
   }
 
@@ -336,8 +309,6 @@ function bindUI() {
       if (!mode) return;
       setIsoOpen(false);
       setIsolatedMode(mode);
-      fitAll(80);
-      breathe('soft');
     });
     document.addEventListener('click', (event) => {
       if (!isoWrapper) return;
@@ -457,7 +428,7 @@ function bindUI() {
     }
   });
 
-  setIsolatedMode(state.isolatedMode || 'cluster');
+  setIsolatedMode(state.isolatedMode || 'unhide');
   updateFooter();
 }
 
@@ -473,7 +444,7 @@ function bootGraph() {
     autoungrabify: false,
     layout: {
       name: layoutName,
-      animate: 'end',
+      animate: false,
       randomize: false,
       fit: true,
       padding: 80,
@@ -483,14 +454,6 @@ function bootGraph() {
       numIter: 1800,
       tile: true,
     },
-    style: [
-      {
-        selector: '.faded',
-        style: {
-          opacity: 0.18,
-        },
-      },
-    ],
   });
 
   applyCyTheme();
@@ -500,7 +463,6 @@ function bootGraph() {
     if (el) {
       el.title = event.target.data('name') || '';
     }
-    breathe('soft');
   });
   state.cy.on('mouseout', 'node', () => {
     const el = state.cy.container();
@@ -531,11 +493,6 @@ function bootGraph() {
   state.cy.on('tap', 'node', (event) => {
     const node = event.target;
     focusOnNode(node.id(), { depth: 1, center: true });
-    breathe('soft');
-  });
-
-  state.cy.on('select', 'node', () => {
-    breathe('soft');
   });
 
   state.cy.on('tap', (event) => {
@@ -1066,22 +1023,30 @@ function drawGraph(graph) {
   if (!state.cy) return;
   const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
   const edges = Array.isArray(graph?.edges) ? graph.edges : [];
-  const nodeCount = nodes.length;
-  const isLargeGraph = nodeCount >= 150;
 
-  const nodeIdSet = new Set(nodes.map((node) => node.id));
   const nodeEles = [];
   const edgeEles = [];
+  const nodeIdSet = new Set();
+
+  const nodeCount = nodes.length;
+  const columns = Math.max(1, Math.ceil(Math.sqrt(Math.max(nodeCount, 1))));
+  const rows = Math.max(1, Math.ceil(nodeCount / columns));
+  const spacing = 220;
+  const offsetX = ((columns - 1) * spacing) / 2;
+  const offsetY = ((rows - 1) * spacing) / 2;
 
   nodes.forEach((node, index) => {
-    const element = { data: { ...node } };
-    if (isLargeGraph) {
-      element.position = {
-        x: (index % 20) * 50,
-        y: Math.floor(index / 20) * 50,
-      };
-    }
-    nodeEles.push(element);
+    if (!node || !node.id) return;
+    nodeIdSet.add(node.id);
+    const col = index % columns;
+    const row = Math.floor(index / columns);
+    nodeEles.push({
+      data: { ...node },
+      position: {
+        x: col * spacing - offsetX,
+        y: row * spacing - offsetY,
+      },
+    });
   });
 
   edges.forEach((edge) => {
@@ -1094,7 +1059,7 @@ function drawGraph(graph) {
   });
 
   if (edgeEles.length === 0) {
-    console.warn('No edges parsed — check workbook link extraction');
+    console.warn('No edges parsed — check parser.');
   }
 
   state.cy.startBatch();
@@ -1103,7 +1068,8 @@ function drawGraph(graph) {
   state.cy.add(edgeEles);
   state.cy.endBatch();
 
-  state.cy.elements().show();
+  state.cy.nodes().show();
+  state.cy.edges().show();
 
   applyCyTheme();
 
@@ -1114,9 +1080,13 @@ function drawGraph(graph) {
   state.selectedNodeId = null;
   state.lastFocusDepth = 1;
 
-  setIsolatedMode(state.isolatedMode || 'cluster');
+  if (typeof setIsolatedMode === 'function') {
+    setIsolatedMode('unhide');
+  }
+
   fitAll(100);
-  breathe('full');
+
+  console.log('Graph ready:', state.cy.nodes().length, 'nodes /', state.cy.edges().length, 'edges');
 }
 
 function applyFilters(options = {}) {
@@ -1145,9 +1115,8 @@ function applyFilters(options = {}) {
     return;
   }
 
-  setIsolatedMode(state.isolatedMode || 'cluster');
+  setIsolatedMode(state.isolatedMode || 'unhide');
   fitAll(80);
-  breathe('soft');
 }
 
 function expandNeighbors(depth) {
@@ -1183,9 +1152,8 @@ function expandNeighbors(depth) {
     }
   }
 
-  setIsolatedMode(state.isolatedMode || 'cluster');
+  setIsolatedMode(state.isolatedMode || 'unhide');
   fitAll(80);
-  breathe('soft');
 }
 
 function fitToElements(elements, padding = 80) {
@@ -1198,29 +1166,29 @@ function fitToElements(elements, padding = 80) {
   }
 }
 
-function runAutoLayout(mode) {
+function runAutoLayout(onStop) {
   if (!state.cy) return null;
-  const soft = mode !== 'full';
   const layout = state.cy.layout({
     name: layoutName,
-    fit: true,
-    animate: 'end',
+    fit: false,
+    animate: false,
     padding: 80,
     randomize: false,
-    nodeRepulsion: soft ? 5200 : 8000,
-    idealEdgeLength: soft ? 150 : 180,
+    nodeRepulsion: 5200,
+    idealEdgeLength: 180,
     gravity: 0.25,
-    numIter: soft ? 1100 : 1700,
+    numIter: 1600,
     tile: true,
   });
 
   state.activeLayout = layout;
-  layout.running = true;
 
   const clearActive = () => {
-    layout.running = false;
     if (state.activeLayout === layout) {
       state.activeLayout = null;
+    }
+    if (typeof onStop === 'function') {
+      onStop();
     }
   };
 
@@ -1228,24 +1196,13 @@ function runAutoLayout(mode) {
     layout.one('layoutstop', clearActive);
   } else if (layout && typeof layout.on === 'function') {
     layout.on('layoutstop', clearActive);
-  } else if (state.cy && typeof state.cy.one === 'function') {
-    state.cy.one('layoutstop', clearActive);
-  } else if (state.cy && typeof state.cy.on === 'function') {
-    state.cy.on('layoutstop', clearActive);
   }
 
   layout.run();
+  if (!(layout && (typeof layout.one === 'function' || typeof layout.on === 'function'))) {
+    clearActive();
+  }
   return layout;
-}
-
-function nudge(eles) {
-  if (!state.cy) return;
-  const targets = eles && typeof eles.positions === 'function' ? eles : state.cy.elements();
-  if (!targets || !targets.length) return;
-  targets.positions((node, position) => ({
-    x: position.x + (Math.random() * 4 - 2),
-    y: position.y + (Math.random() * 4 - 2),
-  }));
 }
 
 function syncIsolatedUI(mode) {
@@ -1255,7 +1212,7 @@ function syncIsolatedUI(mode) {
     scatter: 'Scatter',
     unhide: 'Unhide',
   };
-  const resolved = labels[mode] ? mode : 'cluster';
+  const resolved = labels[mode] ? mode : 'unhide';
   const label = labels[resolved];
   const btn = document.getElementById('isolatedBtn');
   const menu = document.getElementById('isolatedMenu');
@@ -1279,79 +1236,50 @@ function syncIsolatedUI(mode) {
 }
 
 function setIsolatedMode(mode) {
-  const resolved = syncIsolatedUI(mode || state.isolatedMode || 'cluster');
+  const previous = state.isolatedMode || 'unhide';
+  const resolved = syncIsolatedUI(mode || previous || 'unhide');
   state.isolatedMode = resolved;
 
   if (!state.cy) return;
+
+  if (resolved === previous && resolved === 'unhide') {
+    return;
+  }
+
   const iso = state.cy.nodes().filter((node) => node.connectedEdges().length === 0);
 
   if (resolved === 'unhide') {
     state.cy.nodes().show();
     state.cy.edges().show();
-    return;
+    if (typeof applyFilters === 'function') {
+      applyFilters({ rerunLayout: false });
+    }
+  } else if (resolved === 'hide') {
+    iso.hide();
+  } else if (resolved === 'scatter') {
+    iso.show();
+  } else if (resolved === 'cluster' && iso.length) {
+    iso.show();
+    const bb = state.cy.elements().boundingBox();
+    const pad = 60;
+    const islandW = 360;
+    const islandH = 260;
+    const x1 = bb.x2 + pad;
+    const y1 = Math.max(bb.y1, bb.y2 - islandH);
+    iso
+      .layout({
+        name: 'grid',
+        boundingBox: { x1, y1, x2: x1 + islandW, y2: y1 + islandH },
+        avoidOverlap: true,
+        condense: true,
+        rows: Math.ceil(Math.sqrt(Math.max(1, iso.length))),
+      })
+      .run();
   }
 
-  if (!iso || typeof iso.hide !== 'function') {
-    return;
+  if (resolved !== previous) {
+    fitAll(80);
   }
-
-  if (resolved === 'hide') {
-    iso.filter(':visible').hide();
-    return;
-  }
-
-  iso.show();
-
-  const activeIso = iso.filter(':visible');
-
-  if (!activeIso.length) {
-    return;
-  }
-
-  if (resolved === 'scatter') {
-    nudge(activeIso);
-    runAutoLayout('soft');
-    return;
-  }
-
-  const bb = state.cy.elements().boundingBox();
-  const pad = 60;
-  const islandW = 360;
-  const islandH = 260;
-  const x1 = bb.x2 + pad;
-  const y1 = Math.max(bb.y1, bb.y2 - islandH);
-
-  activeIso
-    .layout({
-      name: 'grid',
-      boundingBox: { x1, y1, x2: x1 + islandW, y2: y1 + islandH },
-      avoidOverlap: true,
-      condense: true,
-      rows: Math.ceil(Math.sqrt(Math.max(1, activeIso.length))),
-    })
-    .run();
-
-  runAutoLayout('soft');
-}
-
-let _breathBusy = false;
-let _breathLast = 0;
-function breathe(mode = 'soft') {
-  if (!state.cy) return false;
-  const now = Date.now();
-  if (now - _breathLast < 600) return false;
-  _breathLast = now;
-  if (_breathBusy) return false;
-  _breathBusy = true;
-
-  nudge(state.cy.elements());
-  runAutoLayout(mode);
-
-  setTimeout(() => {
-    _breathBusy = false;
-  }, mode === 'full' ? 650 : 350);
-
-  return true;
 }
 
 function getNeighborhood(node, depth = 1) {
@@ -1401,7 +1329,7 @@ function focusOnNode(id, options = {}) {
   syncListSelection(id);
 
   if (!options.skipRelayout) {
-    setIsolatedMode(state.isolatedMode || 'cluster');
+    setIsolatedMode(state.isolatedMode || 'unhide');
   }
 }
 
