@@ -44,7 +44,11 @@ if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (event) => {
     showError('Unhandled promise rejection:', event.reason);
   });
-  window.addEventListener('resize', fitGraph);
+  window.addEventListener('resize', () => {
+    if (state.cy) {
+      state.cy.resize();
+    }
+  });
 }
 
 let hasBilkent = false;
@@ -56,6 +60,8 @@ try {
 } catch (error) {
   console.warn('bilkent registration failed', error);
 }
+
+const layoutName = typeof hasBilkent !== 'undefined' && hasBilkent ? 'cose-bilkent' : 'cose';
 
 function getEl(...ids) {
   for (const id of ids) {
@@ -83,6 +89,7 @@ function bindUI() {
   const fitBtn = getEl('fitBtn', 'fit-btn');
   const layoutBtn = getEl('layoutBtn', 'layout-btn');
   const hopSelect = getEl('hopSelect');
+  const isolatedModeSelect = getEl('isolatedMode');
   const hideIsolatedBtn = getEl('hideIsolatedBtn', 'hide-isolated-btn');
   const themeToggle = getEl('themeBtn', 'theme-toggle');
   const searchForm = getEl('search-form');
@@ -194,6 +201,16 @@ function bindUI() {
     });
   }
 
+  if (isolatedModeSelect) {
+    isolatedModeSelect.addEventListener('change', () => {
+      applyIsolatedMode();
+      if (isolatedModeSelect.value === 'hide') {
+        nudge();
+        runAutoLayout('soft');
+      }
+    });
+  }
+
   if (filtersDropdown) {
     filtersDropdown
       .querySelectorAll('input[type="checkbox"]')
@@ -202,7 +219,6 @@ function bindUI() {
           const key = checkbox.dataset.filter;
           state.filters[key] = checkbox.checked;
           applyFilters();
-          nudgeLayout();
         });
       });
   }
@@ -309,8 +325,6 @@ function bootGraph() {
     throw new Error('Graph container missing.');
   }
 
-  const layoutName = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
-
   state.cy = cytoscape({
     container: graphContainerEl,
     wheelSensitivity: 0.2,
@@ -320,11 +334,11 @@ function bootGraph() {
       animate: 'end',
       randomize: false,
       fit: true,
-      padding: 50,
-      nodeRepulsion: 4500,
-      idealEdgeLength: 140,
+      padding: 80,
+      nodeRepulsion: 8000,
+      idealEdgeLength: 180,
       gravity: 0.25,
-      numIter: 2500,
+      numIter: 1800,
       tile: true,
     },
     style: [
@@ -446,7 +460,6 @@ function bootGraph() {
     const ro = new ResizeObserver(() => {
       if (state.cy) {
         state.cy.resize();
-        fitGraph();
       }
     });
     ro.observe(graphContainerEl);
@@ -1013,7 +1026,6 @@ function drawGraph(graph) {
   });
 
   state.cy.resize();
-  fitGraph();
 
   applyFilters({ rerunLayout: false });
 
@@ -1023,6 +1035,10 @@ function drawGraph(graph) {
   syncListSelection(null);
   state.selectedNodeId = null;
   state.lastFocusDepth = 1;
+
+  nudge();
+  runAutoLayout('soft');
+  applyIsolatedMode();
   fitGraph();
 }
 
@@ -1048,9 +1064,13 @@ function applyFilters(options = {}) {
       edge.style('display', sourceVisible && targetVisible ? 'element' : 'none');
     });
   });
-  if (options.rerunLayout !== false) {
-    runAutoLayout();
+  if (options.rerunLayout === false) {
+    return;
   }
+
+  nudge();
+  runAutoLayout('soft');
+  applyIsolatedMode();
 }
 
 function expandNeighbors(depth) {
@@ -1077,7 +1097,7 @@ function expandNeighbors(depth) {
     return;
   }
   const node = selected[0];
-  focusOnNode(node.id(), { depth: resolvedDepth, center: true });
+  focusOnNode(node.id(), { depth: resolvedDepth, center: true, skipRelayout: true });
 
   if (hopSelect && hopSelect.value !== String(resolvedDepth)) {
     const hasOption = Array.from(hopSelect.options).some((option) => option.value === String(resolvedDepth));
@@ -1086,27 +1106,20 @@ function expandNeighbors(depth) {
     }
   }
 
-  nudgeLayout();
+  nudge();
+  runAutoLayout('soft');
+  applyIsolatedMode();
 }
 
 function hideIsolated() {
   if (!state.cy) return;
-  state.cy.batch(() => {
-    state.cy.nodes().forEach((node) => {
-      if (node.style('display') === 'none') return;
-      const visibleEdges = node
-        .connectedEdges()
-        .filter((edge) => edge.style('display') !== 'none');
-      if (!visibleEdges.length) {
-        node.style('display', 'none');
-      }
-    });
-    state.cy.edges().forEach((edge) => {
-      if (edge.source().style('display') === 'none' || edge.target().style('display') === 'none') {
-        edge.style('display', 'none');
-      }
-    });
-  });
+  const select = document.getElementById('isolatedMode');
+  if (select) {
+    select.value = 'hide';
+  }
+  applyIsolatedMode();
+  nudge();
+  runAutoLayout('soft');
 }
 
 function fitGraph() {
@@ -1135,158 +1148,89 @@ function fitToElements(elements, padding = 80) {
   }
 }
 
-function getGraphLayoutOptions(nodeCount) {
-  const layoutName = typeof hasBilkent !== 'undefined' && hasBilkent ? 'cose-bilkent' : 'cose';
-  if (nodeCount >= 150) {
-    return {
-      name: layoutName,
-      animate: 'end',
-      randomize: false,
-      fit: true,
-      padding: 80,
-      nodeRepulsion: 8000,
-      idealEdgeLength: 180,
-      numIter: 1500,
-      gravity: 0.25,
-      tile: true,
-    };
-  }
-  return {
+function runAutoLayout(mode) {
+  if (!state.cy) return;
+  const soft = mode === 'soft';
+  const layout = state.cy.layout({
     name: layoutName,
-    animate: 'end',
-    randomize: false,
     fit: true,
-    padding: 80,
-    nodeRepulsion: 4500,
-    idealEdgeLength: 140,
-    gravity: 0.25,
-    numIter: 2500,
-    tile: true,
-  };
-}
-
-function runLayoutWithFit(options = {}) {
-  if (!state.cy) return null;
-  try {
-    const layout = state.cy.layout(options);
-    if (layout && typeof layout.run === 'function') {
-      if (typeof layout.once === 'function') {
-        layout.once('layoutstop', () => {
-          fitGraph();
-        });
-      } else if (typeof layout.on === 'function') {
-        const handler = () => {
-          if (typeof layout.off === 'function') {
-            layout.off('layoutstop', handler);
-          }
-          fitGraph();
-        };
-        layout.on('layoutstop', handler);
-      }
-      layout.run();
-      return layout;
-    }
-  } catch (error) {
-    console.error('Layout execution failed', error);
-  }
-  return null;
-}
-
-function runAutoLayout(overrides = {}) {
-  if (!state.cy) return;
-  const nodeCount = state.cy.nodes().length;
-  if (!nodeCount) {
-    return;
-  }
-  const options = { ...getGraphLayoutOptions(nodeCount), ...overrides };
-  runLayoutWithFit(options);
-}
-
-function runLocalizedLayout(collection, padding = 80) {
-  if (!state.cy || !collection || !collection.length) return;
-  const nodes = typeof collection.nodes === 'function' ? collection.nodes() : null;
-  const nodeCount = nodes ? nodes.length : 0;
-  if (!nodeCount) return;
-  const baseOptions = getGraphLayoutOptions(nodeCount);
-  const options = {
-    ...baseOptions,
-    padding,
-    eles: collection,
-  };
-  try {
-    const layout = state.cy.layout(options);
-    if (layout && typeof layout.run === 'function') {
-      layout.run();
-    }
-  } catch (error) {
-    console.warn('Localized layout failed', error);
-  }
-}
-
-function nudgeLayout() {
-  if (!state.cy) return;
-
-  const selected = state.cy.$('node:selected');
-  let hood = null;
-
-  if (selected.length) {
-    const depth = state.lastFocusDepth || 1;
-    hood = getNeighborhood(selected[0], depth);
-  } else {
-    hood = state.cy
-      .elements()
-      .filter((ele) => ele.style('display') !== 'none' && !ele.hasClass('faded'));
-  }
-
-  if (!hood || !hood.length) {
-    return;
-  }
-
-  const visibleHood = hood.filter((ele) => ele.style('display') !== 'none');
-  const hoodNodes = visibleHood.nodes();
-
-  if (!hoodNodes.length) {
-    return;
-  }
-
-  state.cy.batch(() => {
-    hoodNodes.forEach((node) => {
-      if (typeof node.locked === 'function' && node.locked()) {
-        return;
-      }
-      const position = node.position();
-      if (!position) return;
-      const jitter = () => {
-        const magnitude = 5 + Math.random() * 5;
-        return (Math.random() < 0.5 ? -1 : 1) * magnitude;
-      };
-      node.position({
-        x: position.x + jitter(),
-        y: position.y + jitter(),
-      });
-    });
-  });
-
-  const visibleElements = visibleHood.length
-    ? visibleHood
-    : hoodNodes.union(hoodNodes.connectedEdges());
-
-  const layoutOptions = {
-    name: hasBilkent ? 'cose-bilkent' : 'cose',
     animate: 'end',
+    padding: 80,
     randomize: false,
-    fit: !selected.length,
-    eles: visibleElements,
-  };
-
-  try {
-    const layout = state.cy.layout(layoutOptions);
-    if (layout && typeof layout.run === 'function') {
-      layout.run();
-    }
-  } catch (error) {
-    console.warn('Nudge layout failed', error);
+    nodeRepulsion: soft ? 5200 : 8000,
+    idealEdgeLength: soft ? 150 : 180,
+    gravity: 0.25,
+    numIter: soft ? 1200 : 1800,
+    tile: true,
+  });
+  if (layout && typeof layout.run === 'function') {
+    layout.run();
   }
+}
+
+function nudge(eles) {
+  if (!state.cy) return;
+  const targets = eles && typeof eles.positions === 'function'
+    ? eles
+    : state.cy.elements();
+  if (!targets || !targets.length) return;
+  targets.positions((_, position) => ({
+    x: position.x + (Math.random() * 6 - 3),
+    y: position.y + (Math.random() * 6 - 3),
+  }));
+}
+
+function getIsolated() {
+  if (!state.cy) return null;
+  return state.cy.nodes().filter((node) => node.degree(false) === 0);
+}
+
+function applyIsolatedMode() {
+  if (!state.cy) return;
+  const mode = document.getElementById('isolatedMode')?.value || 'cluster';
+  const iso = getIsolated();
+  if (!iso) return;
+
+  const isoCount = iso.length;
+
+  iso.show();
+
+  if (mode === 'hide') {
+    iso.hide();
+    return;
+  }
+
+  if (mode === 'scatter') {
+    if (!isoCount) {
+      return;
+    }
+    nudge(iso);
+    runAutoLayout('soft');
+    return;
+  }
+
+  const allElements = state.cy.elements();
+  if (!allElements.length || !isoCount) {
+    return;
+  }
+
+  const bb = allElements.boundingBox();
+  const islandWidth = 360;
+  const islandHeight = 260;
+  const pad = 40;
+  const x1 = bb.x2 + pad;
+  const y1 = bb.y1;
+  const rows = Math.max(1, Math.ceil(Math.sqrt(isoCount)));
+
+  iso.layout({
+    name: 'grid',
+    boundingBox: { x1, y1, x2: x1 + islandWidth, y2: y1 + islandHeight },
+    avoidOverlap: true,
+    condense: true,
+    rows,
+  }).run();
+
+  runAutoLayout('soft');
 }
 
 function getNeighborhood(node, depth = 1) {
@@ -1332,10 +1276,14 @@ function focusOnNode(id, options = {}) {
     fitToElements(neighborhood, options.fitPadding ?? 120);
   }
 
-  runLocalizedLayout(neighborhood, options.layoutPadding ?? 80);
-
   renderDetails(node.data());
   syncListSelection(id);
+
+  if (!options.skipRelayout) {
+    nudge();
+    runAutoLayout('soft');
+    applyIsolatedMode();
+  }
 }
 
 function jumpToNode(query) {

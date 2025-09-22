@@ -175,6 +175,18 @@ summary {
   outline: none;
 }
 
+#isolatedMode {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--gem-border);
+  background: var(--gem-surface);
+  color: var(--gem-text);
+  font-size: 13px;
+}
+
 summary {
   list-style: none;
   cursor: pointer;
