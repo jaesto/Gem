@@ -8,6 +8,8 @@ An offline, client-side viewer that parses Tableau `.twb` and `.twbx` workbooks 
 - Supports Tableau `.twb` (XML) and `.twbx` (packaged) files
 - Interactive Cytoscape graph with pan/zoom/drag, neighbor expansion, and search
 - Node labels automatically adjust contrast per theme, truncate with ellipses, and expose full names on hover
+- Layout "breathes" after major actions (load, fit, auto layout, expand neighbors, filters, isolated mode changes) and when
+  hovering or tapping nodes; when zoomed out the labels hide until there's room, but hovering always reveals the name
 - Sidebar lists for fields, calculated fields, worksheets, and parameters
 - Detail panel with formulas, references, and usage
 - Filter controls for node types, LOD-only, and table-calculation-only views
