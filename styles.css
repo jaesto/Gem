@@ -1,4 +1,12 @@
 :root {
+  --label-outline: rgba(0, 0, 0, 0.65);
+}
+
+html.light {
+  --label-outline: rgba(255, 255, 255, 0.75);
+}
+
+:root {
   --topbar-h: 42px;
   --footer-h: 40px;
   --gem-bg: #0E0B14;
