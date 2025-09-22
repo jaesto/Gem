@@ -23,6 +23,10 @@
   --label-outline: rgba(0, 0, 0, 0.65);
 }
 
+html.light {
+  --label-outline: rgba(255, 255, 255, 0.75);
+}
+
 html.light,
 :root.light {
   --gem-bg: #F7F7FB;
