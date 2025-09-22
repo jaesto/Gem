@@ -25,6 +25,27 @@ const state = {
 
 const NAME_NORMALIZER = /[\[\]]/g;
 
+function cssVar(name, fallback) {
+  if (typeof window === 'undefined' || !window.getComputedStyle) {
+    return fallback;
+  }
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function themeColors() {
+  return {
+    text: cssVar('--gem-text', '#EAEAF0'),
+    outline: cssVar('--label-outline', 'rgba(0,0,0,.65)'),
+    edge: '#a2a9b6',
+    calc: '#8B5CF6',
+    field: '#A78BFA',
+    sheet: '#6EE7B7',
+    dash: '#F59E0B',
+    param: '#22D3EE',
+  };
+}
+
 function showError(msg, err) {
   const el = document.getElementById('errOverlay');
   if (!el) return;
@@ -63,6 +84,74 @@ try {
 }
 
 const layoutName = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
+
+function applyCyTheme() {
+  if (!state.cy) return;
+  const c = themeColors();
+  const style = [
+    {
+      selector: 'node',
+      style: {
+        label: 'data(name)',
+        width: 'label',
+        height: 'label',
+        padding: '8px',
+        shape: 'round-rectangle',
+        'background-color': c.field,
+        'font-size': '12px',
+        color: c.text,
+        'text-outline-color': c.outline,
+        'text-outline-width': 2,
+        'text-wrap': 'wrap',
+        'text-max-width': '140px',
+        'text-overflow-wrap': 'ellipsis',
+        'min-zoomed-font-size': 10,
+        'text-opacity': 0.95,
+        'text-valign': 'center',
+        'text-halign': 'center',
+        'overlay-opacity': 0,
+        'border-width': 0,
+      },
+    },
+    { selector: 'node[type="CalculatedField"]', style: { 'background-color': c.calc } },
+    { selector: 'node[type="Field"]', style: { 'background-color': c.field } },
+    { selector: 'node[type="Worksheet"]', style: { 'background-color': c.sheet } },
+    { selector: 'node[type="Dashboard"]', style: { 'background-color': c.dash } },
+    { selector: 'node[type="Parameter"]', style: { 'background-color': c.param } },
+    {
+      selector: 'edge',
+      style: {
+        'line-color': c.edge,
+        opacity: 0.9,
+        width: 1.5,
+        'curve-style': 'bezier',
+        'target-arrow-color': c.edge,
+        'target-arrow-shape': 'vee',
+      },
+    },
+    { selector: ':selected', style: { 'border-width': 3, 'border-color': c.calc } },
+    { selector: '.faded', style: { opacity: 0.18 } },
+  ];
+  state.cy.style(style);
+}
+
+function fitAll(pad = 80) {
+  if (!state.cy) return;
+  const container = typeof state.cy.container === 'function' ? state.cy.container() : null;
+  if (!container) return;
+  const rect = container.getBoundingClientRect();
+  if (rect.width < 20 || rect.height < 20) {
+    state.cy.resize();
+    return;
+  }
+  state.cy.resize();
+  const visible = state.cy.elements().filter((ele) => ele.style('display') !== 'none');
+  const targets = visible.length ? visible : state.cy.elements();
+  if (!targets || !targets.length) {
+    return;
+  }
+  state.cy.fit(targets, pad);
+}
 
 function getEl(...ids) {
   for (const id of ids) {
@@ -176,7 +265,7 @@ function bindUI() {
     fitBtn.addEventListener('click', () => {
       if (!state.cy) return;
       state.cy.elements().removeClass('faded');
-      fitGraph();
+      fitAll(80);
       breathe('soft');
     });
   }
@@ -187,6 +276,8 @@ function bindUI() {
       if (!ran) {
         runAutoLayout('full');
       }
+      breathe('soft');
+      fitAll(80);
     });
   }
 
@@ -282,6 +373,11 @@ function bindUI() {
     themeToggle.addEventListener('click', () => {
       root.classList.toggle('light');
       syncThemeToggle();
+      applyCyTheme();
+      if (state.cy) {
+        state.cy.resize();
+      }
+      fitAll(60);
     });
   }
 
@@ -330,7 +426,7 @@ function bindUI() {
       const tag = document.activeElement?.tagName?.toLowerCase();
       if (tag !== 'input' && tag !== 'textarea') {
         event.preventDefault();
-        fitGraph();
+        fitAll(80);
       }
     }
   });
@@ -363,89 +459,6 @@ function bootGraph() {
     },
     style: [
       {
-        selector: 'node',
-        style: {
-          'background-color': 'var(--gem-primary-2)',
-          color: 'var(--gem-text)',
-          label: 'data(name)',
-          'font-size': '12px',
-          'text-wrap': 'wrap',
-          'text-valign': 'center',
-          'text-halign': 'center',
-          'text-max-width': '120px',
-          'text-outline-color': 'var(--label-outline)',
-          'text-outline-width': 2.5,
-          'text-overflow-wrap': 'ellipsis',
-          'min-zoomed-font-size': 10,
-          'text-opacity': 0.95,
-          'border-width': 1.5,
-          'border-color': 'rgba(14, 11, 20, 0.45)',
-          'overlay-opacity': 0,
-        },
-      },
-      {
-        selector: 'node[type = "Field"]',
-        style: {
-          'background-color': '#22c55e',
-          'border-color': '#15803d',
-        },
-      },
-      {
-        selector: 'node[type = "CalculatedField"]',
-        style: {
-          'background-color': 'var(--gem-primary)',
-          'border-color': 'var(--gem-primary-3)',
-          shape: 'round-rectangle',
-        },
-      },
-      {
-        selector: 'node[type = "Worksheet"]',
-        style: {
-          'background-color': '#6EE7B7',
-          'border-color': '#10B981',
-          shape: 'rectangle',
-        },
-      },
-      {
-        selector: 'node[type = "Dashboard"]',
-        style: {
-          'background-color': '#F59E0B',
-          'border-color': '#B45309',
-          shape: 'hexagon',
-        },
-      },
-      {
-        selector: 'node[type = "Parameter"]',
-        style: {
-          'background-color': '#22D3EE',
-          'border-color': '#0891B2',
-          shape: 'diamond',
-        },
-      },
-      {
-        selector: 'edge',
-        style: {
-          width: 2,
-          'line-color': '#a2a9b6',
-          'target-arrow-color': '#a2a9b6',
-          'target-arrow-shape': 'triangle',
-          'curve-style': 'bezier',
-          'arrow-scale': 1.1,
-          'font-size': 9,
-          color: '#475569',
-          label: 'data(type)',
-        },
-      },
-      {
-        selector: ':selected',
-        style: {
-          'border-width': 3,
-          'border-color': 'var(--gem-primary)',
-          'line-color': 'var(--gem-primary)',
-          'target-arrow-color': 'var(--gem-primary)',
-        },
-      },
-      {
         selector: '.faded',
         style: {
           opacity: 0.18,
@@ -453,6 +466,8 @@ function bootGraph() {
       },
     ],
   });
+
+  applyCyTheme();
 
   state.cy.on('mouseover', 'node', (event) => {
     const el = state.cy.container();
@@ -1051,6 +1066,7 @@ function drawGraph(graph) {
     state.cy.add(elements);
   });
 
+  applyCyTheme();
   state.cy.resize();
 
   applyFilters({ rerunLayout: false });
@@ -1063,7 +1079,7 @@ function drawGraph(graph) {
   state.lastFocusDepth = 1;
 
   setIsolatedMode('cluster');
-  fitGraph();
+  fitAll(100);
   breathe('full');
 }
 
@@ -1132,22 +1148,7 @@ function expandNeighbors(depth) {
 
   setIsolatedMode(state.isolatedMode || 'cluster');
   breathe('soft');
-}
-
-function fitGraph() {
-  if (!state.cy) return;
-  const el = document.getElementById('graph');
-  if (!el) return;
-  const r = el.getBoundingClientRect();
-  if (r.width < 20 || r.height < 20) {
-    state.cy.resize();
-    return;
-  }
-  state.cy.resize();
-  const elements = state.cy.elements().filter((ele) => ele.style('display') !== 'none');
-  const target = elements.length ? elements : state.cy.elements();
-  if (!target.length) return;
-  state.cy.fit(target, 40);
+  fitAll(80);
 }
 
 function fitToElements(elements, padding = 80) {
@@ -1156,7 +1157,7 @@ function fitToElements(elements, padding = 80) {
   if (visible.length) {
     state.cy.fit(visible, padding);
   } else {
-    fitGraph();
+    fitAll(padding);
   }
 }
 
@@ -1236,25 +1237,33 @@ function setIsolatedMode(mode) {
 
   iso.show();
 
+  const finalize = () => {
+    fitAll(80);
+  };
+
   if (resolved === 'hide') {
     iso.hide();
+    finalize();
     return;
   }
 
   if (resolved === 'unhide') {
     iso.show();
     runAutoLayout('soft');
+    finalize();
     return;
   }
 
   if (!iso.length) {
     runAutoLayout('soft');
+    finalize();
     return;
   }
 
   if (resolved === 'scatter') {
     nudge(iso);
     runAutoLayout('soft');
+    finalize();
     return;
   }
 
@@ -1276,6 +1285,7 @@ function setIsolatedMode(mode) {
     .run();
 
   runAutoLayout('soft');
+  finalize();
 }
 
 let _breathBusy = false;
