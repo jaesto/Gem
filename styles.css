@@ -113,7 +113,7 @@ summary {
   border-radius: 0;
   column-gap: 16px;
   position: relative;
-  z-index: 15;
+  z-index: 2000;
   flex-shrink: 0;
 }
 
@@ -227,6 +227,7 @@ summary::-webkit-details-marker {
 
 .dropdown {
   position: relative;
+  z-index: 2000;
 }
 
 .dropdown[open] > summary {
@@ -234,29 +235,24 @@ summary::-webkit-details-marker {
   border-color: rgba(139, 92, 246, 0.45);
 }
 
-.dropdown > .menu,
-.dropdown > .dropdown-menu {
+.dropdown .menu {
   position: absolute;
   right: 0;
   top: 100%;
-  margin-top: 8px;
-  min-width: 200px;
-  padding: 12px;
   display: none;
-  flex-direction: column;
-  gap: 10px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)), var(--gem-surface);
+  min-width: 180px;
+  background: var(--gem-surface);
   border: 1px solid var(--gem-border);
-  border-radius: 16px;
+  border-radius: 14px;
+  padding: 6px;
   box-shadow: var(--gem-shadow);
-  z-index: 20;
+  z-index: 2000;
+  pointer-events: auto;
 }
 
-.dropdown.open > .menu,
-.dropdown.open > .dropdown-menu,
-.dropdown[open] > .menu,
-.dropdown[open] > .dropdown-menu {
-  display: flex;
+.dropdown.open .menu,
+.dropdown[open] > .menu {
+  display: block;
 }
 
 .dropdown .menu hr {
@@ -272,29 +268,30 @@ summary::-webkit-details-marker {
   font-size: 0.85rem;
 }
 
-.dropdown .menu .menu-item {
+.menu-item {
   width: 100%;
   text-align: left;
-  background: linear-gradient(180deg, var(--gem-surface-2), var(--gem-surface));
-  border: 1px solid var(--gem-border);
-  border-radius: 999px;
-  padding: 6px 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: transparent;
+  border: 0;
   color: var(--gem-text);
   font-size: 13px;
   cursor: pointer;
-  transition: transform var(--trans), box-shadow var(--trans), border var(--trans), background var(--trans);
 }
 
-.dropdown .menu .menu-item:hover,
-.dropdown .menu .menu-item:focus-visible,
-.dropdown .menu .menu-item.active {
-  box-shadow: var(--gem-glow);
-  transform: translateY(-1px);
+.menu-item:hover {
+  background: rgba(139, 92, 246, 0.12);
+  cursor: pointer;
+}
+
+.menu-item:focus-visible {
   outline: none;
+  box-shadow: var(--gem-glow);
 }
 
-.dropdown .menu .menu-item.active {
-  border-color: rgba(139, 92, 246, 0.45);
+.menu-item.active {
+  background: rgba(139, 92, 246, 0.18);
 }
 
 .dropdown .menu button {
@@ -399,6 +396,18 @@ summary::-webkit-details-marker {
   height: 100%;
   min-width: 360px;
   overflow: hidden;
+}
+
+#graph,
+#graph-container,
+.graphwrap {
+  z-index: 1;
+}
+
+.topbar,
+.dropdown,
+.menu {
+  z-index: 2000;
 }
 
 /* The Cytoscape mount must fill graphwrap */

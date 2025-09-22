@@ -37,17 +37,24 @@
       <div class="right">
         <button class="btn" id="fitBtn" type="button" title="Zoom to the visible graph">Fit</button>
         <button class="btn" id="layoutBtn" type="button" title="Re-run the layout to spread nodes">Auto layout</button>
-        <div class="dropdown">
-          <button id="layoutMenuBtn" class="btn" title="Choose layout">Layout ▾</button>
-          <div id="layoutMenu" class="menu">
-            <button class="menu-item" data-layout="force">Force</button>
-            <button class="menu-item" data-layout="grid">Grid</button>
-            <button class="menu-item" data-layout="hierarchy">Hierarchy</button>
-            <button class="menu-item" data-layout="centered">Centered hierarchy</button>
-            <button class="menu-item" data-layout="centered-selected">Centered from selection</button>
+        <div class="dropdown" id="layoutDropdown">
+          <button
+            id="layoutMenuBtn"
+            class="btn"
+            title="Choose layout"
+            aria-haspopup="true"
+            aria-expanded="false"
+          >
+            Layout: Auto ▾
+          </button>
+          <div id="layoutMenu" class="menu" role="menu" aria-label="Layout menu">
+            <button class="menu-item" data-layout="force" role="menuitem">Force</button>
+            <button class="menu-item" data-layout="grid" role="menuitem">Grid</button>
+            <button class="menu-item" data-layout="hierarchy" role="menuitem">Hierarchy</button>
+            <button class="menu-item" data-layout="centered" role="menuitem">Centered hierarchy</button>
+            <button class="menu-item" data-layout="centered-selected" role="menuitem">Centered from selection</button>
           </div>
         </div>
-        <span id="layoutStatus" class="chip" aria-live="polite">Layout: Auto</span>
         <label for="hopSelect" class="visually-hidden">Expand neighbors hops</label>
         <select id="hopSelect" title="Expand neighbors this many hops">
           <option value="1">1 hop</option>
