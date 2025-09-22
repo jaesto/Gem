@@ -184,6 +184,16 @@ summary {
   transition: transform var(--trans), box-shadow var(--trans), background var(--trans), border var(--trans);
 }
 
+.chip {
+  background: linear-gradient(180deg, var(--gem-surface-2), var(--gem-surface));
+  border: 1px solid var(--gem-border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--gem-text);
+  margin-left: 6px;
+}
+
 .btn:hover,
 .btn:focus-visible {
   box-shadow: var(--gem-glow);
@@ -589,7 +599,7 @@ summary::-webkit-details-marker {
 
 .faded {
   opacity: 0.18;
-  transition: opacity var(--trans);
+  transition: opacity 160ms ease;
 }
 
 @media (max-width: 980px) {
