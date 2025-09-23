@@ -149,33 +149,10 @@
       (function () {
         const logoEl = document.getElementById('brandLogo');
         if (!logoEl) return;
-        const pngPath = './assets/gem-logo.png';
-        const fallbackSvg = `
-          <svg width="28" height="28" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <linearGradient id="gemLogoGradient" x1="0" x2="1" y1="0" y2="1">
-                <stop offset="0%" stop-color="#A78BFA" /><stop offset="100%" stop-color="#6D28D9" />
-              </linearGradient>
-            </defs>
-            <rect width="256" height="256" rx="28" fill="#0E0B14" />
-            <path d="M128 20 L236 82 V174 L128 236 L20 174 V82 Z" fill="url(#gemLogoGradient)" />
-            <path d="M128 20 L236 82 L128 128 L20 82 Z" fill="#8B5CF6" opacity=".35" />
-            <path d="M128 128 L236 82 V174 L128 236 Z" fill="#6D28D9" opacity=".45" />
-            <path d="M128 128 L20 82 V174 L128 236 Z" fill="#C084FC" opacity=".25" />
-          </svg>`;
-
-        const swapToFallback = () => {
-          const span = document.createElement('span');
-          span.className = 'brand-logo-fallback';
-          span.setAttribute('aria-hidden', 'true');
-          span.innerHTML = fallbackSvg;
-          logoEl.replaceWith(span);
-        };
-
+        // Always use the PNG from assets (with cache-busting)
+        logoEl.src = './assets/gem-logo.png?v=2';
         logoEl.decoding = 'async';
-        logoEl.addEventListener('error', swapToFallback, { once: true });
-        logoEl.src = pngPath;
-      })();
+})();
     </script>
     <script src="./lib/jszip.min.js"></script>
     <script src="./lib/cytoscape.min.js"></script>
