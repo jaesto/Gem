@@ -1,95 +1,138 @@
-# Tableau Workbook Explorer (MVP)
+# Gem — Tableau Workbook Explorer (offline)
 
-An offline, client-side viewer that parses Tableau `.twb` and `.twbx` workbooks in the browser. Drop a workbook into the app to explore lineage through an interactive graph, review calculated fields, and export auto-generated documentation artifacts.
+![Static site badge](https://img.shields.io/badge/Static%20site-Yes-8B5CF6?style=flat-square)
+![Runs offline badge](https://img.shields.io/badge/Runs%20offline-100%25-22c55e?style=flat-square)
 
-## Features
+## 1. Overview
 
-- Runs entirely in the browser (no servers, no telemetry, no network access required)
-- Supports Tableau `.twb` (XML) and `.twbx` (packaged) files
-- Interactive Cytoscape graph with pan/zoom/drag, neighbor expansion, and search
-- Node labels automatically adjust contrast per theme, truncate with ellipses, and expose full names on hover
-- Layout "breathes" after major actions (load, fit, auto layout, expand neighbors, filters, isolated mode changes) and when
-  hovering or tapping nodes; when zoomed out the labels hide until there's room, but hovering always reveals the name
-- Sidebar lists for fields, calculated fields, worksheets, and parameters
-- Detail panel with formulas, references, and usage
-- Filter controls for node types, LOD-only, and table-calculation-only views
-- Exportable artifacts: `workbook_doc.json`, `graph.json`, `workbook_doc.md`, and `lineage.dot`
+Gem lets you drop a Tableau `.twb` or `.twbx` workbook into the browser and explore it without
+sending data anywhere. The app parses workbooks client-side, builds a lineage graph, and lets you
+inspect sheets, dashboards, fields, and parameters through a Cytoscape visualization. You can also
+export structured documentation that captures formulas and "where used" relationships for later
+reference.
 
-## Branding & Theming
+Gem is built for secure environments. It makes zero network calls, stores everything in memory, and
+works entirely offline so it can run inside air-gapped or DoD networks.
 
-- Dark-first design tokens live in `styles.css` as CSS custom properties such as:
-  - `--gem-bg`, `--gem-surface`, `--gem-surface-2`
-  - `--gem-text`, `--gem-muted`
-  - `--gem-primary`, `--gem-primary-2`, `--gem-primary-3`, `--gem-accent`
-  - `--gem-success`, `--gem-warning`
-  - Utility tokens: `--gem-border`, `--gem-shadow`, `--gem-glow`, `--radius`, `--radius-lg`, `--pad`, `--trans`
-- The header logo first attempts to load `./assets/gem-logo.png`; if unavailable it falls back to the inline SVG contained in `index.html` so the app remains binary-free by default.
+## 2. Quick start
 
-## Toolbar
+1. Download this repository or clone it locally.
+2. Double-click `index.html` (or open it via `file://`) to run Gem locally.
+3. Alternatively, host the repository with GitHub Pages and open the deployed `index.html`.
+4. Drag in a Tableau workbook or click **Open Workbook**.
 
-- Slim single-line toolbar with logo on the left, centered search, and controls on the right sized for a compact 42px header.
-- Hop dropdown (1–5) replaces expand1/2 buttons.
+Supported files: Tableau `.twb` (XML) and `.twbx` (packaged) workbooks.
 
-## Getting started
+## 3. Using the app
 
-### Run locally
+- **Open a workbook**: Click **Open Workbook** (`openBtn`) or drag a file onto the drop zone
+  (`dropZone` / `fileInput`).
+- **Search**: Type in the search box (`search`). Press **Enter** to jump to the best match and
+  **Esc** to clear the field.
+- **Layouts**:
+  - **Fit** (`fitBtn`) zooms to the currently visible nodes.
+  - **Auto layout** (`layoutBtn`) re-runs the force layout for a quick refresh.
+  - **Layout menu** (`layoutDropdown` / `layoutMenu` / `layoutMenuBtn`):
+    - **Force**: physics simulation for organic positioning after big updates.
+    - **Grid**: tidy rows/columns for scanning long lists of nodes.
+    - **Hierarchy**: breadth-first layout that highlights dashboard-to-worksheet depth.
+    - **Centered hierarchy**: concentric rings by type for overview diagrams.
+    - **Centered from selection**: centers on the active node to study its neighborhood.
+- **Hops**: Choose 1–5 hops from `hopSelect` to expand neighbors around the selection.
+- **Isolated nodes** (`isolatedBtn` / `isolatedMenu`):
+  - **Hide** removes detached nodes from view.
+  - **Cluster** packs isolated nodes into a compact grid for review.
+  - **Scatter** restores isolated nodes but keeps them separated.
+  - **Unhide** shows everything, respecting current filters.
+- **Filters** (`filters-dropdown`): Toggle node types (Fields, Calculated, Worksheets, Dashboards,
+  Parameters) plus **LOD only** and **Table Calcs only** views for calculated fields.
+- **Theme** (`themeBtn`): Switch between Dark and Light themes for the current session.
+- **Drag/Zoom**: Pan with the mouse, scroll to zoom, and drag nodes to adjust their placement.
 
-1. Clone or download this repository.
-2. Open `site/index.html` directly in your browser (double-click from Finder/Explorer or use `file://`).
-3. Drag a Tableau `.twb` or `.twbx` onto the drop zone, or use **Open Workbook**.
+## 4. Exports
 
-No build step is required; everything is bundled for offline use.
+- `workbook_doc.json`: Structured metadata for the full workbook (fields, calculated fields,
+  sheets, dashboards, parameters).
+- `graph.json`: Nodes and edges used in the Cytoscape graph visualization.
+- `workbook_doc.md`: Human-readable Markdown with formulas, references, and where-used details.
+- `lineage.dot`: Graphviz DOT you can render to PNG/SVG lineage diagrams.
 
-### Using the app
+To export, open **Export ▸** and choose a format. The file downloads locally; nothing leaves your
+browser.
 
-1. Drop or open a Tableau workbook.
-2. Explore the graph with pan, zoom, drag, and neighbor expansion buttons.
-3. Filter by node type, or show only LOD/table-calculation nodes.
-4. Use the search box (press `/` to focus, `f` to fit) to jump to a node.
-5. Select a node to inspect formulas, references, and usage in the detail panel.
-6. Export documentation via **Export →** `workbook_doc.json`, `graph.json`, `workbook_doc.md`, or `lineage.dot`.
+## 5. UI reference (Button & control table)
 
-### Publish with GitHub Pages
+| Control | ID or Label | What it does | Notes/Shortcuts |
+| --- | --- | --- | --- |
+| Open Workbook | `openBtn` | Launches the workbook picker. | Drop files onto `dropZone`. |
+| Fit | `fitBtn` | Fits visible graph elements. | Press `f` while focus is outside inputs. |
+| Auto layout | `layoutBtn` | Replays the force layout. | Helpful after filters or hop changes. |
+| Layout menu | `layoutDropdown`[^layout-ids] | Preset layouts[^layout-menu]. | Runs immediately. |
+| Hop selector | `hopSelect` | Sets neighbor hop count. | Values 1–5; mirrors last expansion. |
+| Isolated nodes | `isolatedBtn`[^isolated-ids] | Modes[^isolated-note]. | Menu toggles. |
+| Filters | `filters-dropdown` | Filters[^filters-note]. | Combine toggles to narrow the graph. |
+| Export | `export-dropdown` | Download workbook exports[^export-note]. | Browser download flow. |
+| Theme | `themeBtn` | Toggles Dark/Light theme. | Choice persists while the tab stays open. |
 
-1. Push this repository to GitHub.
-2. Enable GitHub Pages on the repository (Settings → Pages) and choose the **main** branch with the root folder.
-3. The provided workflow (`.github/workflows/pages.yml`) publishes the `site/` folder automatically on each push to `main`.
+[^layout-menu]: Options: Force, Grid, Hierarchy, Centered, Centered-from-selection.
+[^layout-ids]: Related controls: `layoutMenuBtn`, `layoutMenu`.
+[^isolated-note]: Modes: Hide, Cluster, Scatter, Unhide.
+[^isolated-ids]: Dropdown container: `isolatedMenu`.
+[^filters-note]: Fields, Calcs, Sheets, Dashboards, Parameters, LOD/Table Calc views.
+[^export-note]: Files: `workbook_doc.json`, `graph.json`, `workbook_doc.md`, `lineage.dot`.
 
-## Security & privacy
+## 6. Panels & details
 
-- 100% offline: all parsing, graphing, and exports happen client-side in the browser.
-- No external CDNs: Cytoscape.js and JSZip are bundled locally under `site/lib/`.
-- No analytics, telemetry, or network requests.
+- **Sidebar tabs**: `panel-nodes`, `panel-sheets`, `panel-calcs`, and `panel-params` list the
+  corresponding workbook items (`list-nodes`, `list-sheets`, `list-calcs`, `list-params`). Clicking
+  an entry focuses the node in the graph.
+- **Details panel**: The `details` pane shows the selected node’s type, datasource, formulas, and
+  related worksheets or dashboards. Calculated fields include flags (LOD/Table Calc) and references.
 
-## Repository layout
+## 7. How it works (for developers)
 
-```
-tableau-browser-mvp/
-├─ .nojekyll
-├─ README.md
-├─ LICENSE.md
-├─ CHANGELOG.md
-├─ SECURITY.md
-├─ site/
-│  ├─ index.html
-│  ├─ styles.css
-│  ├─ app.js
-│  └─ lib/
-│     ├─ cose-base.js
-│     ├─ cytoscape-cose-bilkent.min.js
-│     ├─ cytoscape.min.js
-│     ├─ jszip.min.js
-│     └─ layout-base.js
-└─ .github/workflows/pages.yml
-```
+The runtime flows from parsing to rendering:
 
-A `site/data/` directory is created at runtime for downloaded artifacts (not tracked in Git).
+1. Parse the uploaded workbook XML (`parseWorkbookXML`).
+2. Build a normalized node/edge model (`buildGraphJSON`).
+3. Initialize Cytoscape once (`bootGraph`), then redraw via `drawGraph`.
+4. React to UI actions (`bindUI`): filters, layouts, hops, isolation, theme.
+5. Export serializers (`buildMarkdown`, `buildDot`, and JSON builders) format downloads on demand.
 
-## Keyboard shortcuts
+File map:
 
-- `/` – focus the search box
-- `f` – fit the graph to the visible elements
+- `index.html`: Layout, toolbar controls, panels, and script tags. No build tooling required.
+- `styles.css`: Theme tokens (purple/gray palette) and styles for top bar, sidebar, graph, and
+  details.
+- `app.js`: Parsing, data model construction, Cytoscape initialization, UI wiring, and export
+  helpers.
+- `lib/*`: Bundled third-party libraries (JSZip, Cytoscape, layout extensions).
 
-## License
+Data types:
 
-This project is released under the MIT License. Cytoscape.js and JSZip are bundled locally and retain their MIT licenses (see `LICENSE.md`).
+- **Node**: `{ id, name, type }` with `type` values `Field`, `CalculatedField`, `Worksheet`,
+  `Dashboard`, `Parameter` plus additional metadata (datasource, formulas, usage).
+- **Edge**: `{ id, source, target, label }` using relationship names such as `FEEDS`, `PARAM_OF`,
+  `USED_IN`, and `ON` to describe lineage.
+- **Workbook graph**: `{ nodes: Node[], edges: Edge[] }` consumed by Cytoscape.
+
+## 8. Developing & contributing
+
+- **Prerequisites**: None. Open `index.html` directly in a modern browser.
+- **Coding standards**: Use JSDoc for functions, avoid renaming existing IDs, and preserve ARIA
+  attributes when editing menus and panels.
+- **Extending layouts**: Add new layouts beside `runForceLayout`, `runGridLayout`, and friends in
+  `app.js`, then wire them into `layoutMenu`.
+- **New exports**: Extend the switch in the export handler, reusing patterns from `buildMarkdown`,
+  `buildDot`, and `downloadBlob`.
+
+## 9. Troubleshooting
+
+- `.twbx` files fail to open: Check the browser console for parsing errors and confirm the file
+  isn’t blocked by the browser’s size limits.
+- Brand logo missing on GitHub Pages: Use the hosted path `/Gem/assets/gem-logo.png` or the relative
+  `./assets/gem-logo.png` when serving from a custom domain.
+
+## 10. License
+
+This project uses the MIT License. Cytoscape.js and JSZip remain MIT licensed (see `LICENSE.md`).

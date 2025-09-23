@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <!-- Top navigation bar with workbook controls, layouts, filters, exports, and theme toggle -->
     <header class="topbar">
       <div class="left">
         <a class="brand" href="./">
@@ -78,6 +79,7 @@
             <button class="menu-item" type="button" data-iso="unhide">Unhide</button>
           </div>
         </div>
+        <!-- Filter dropdown for node type toggles -->
         <details class="dropdown" id="filters-dropdown">
           <summary>Filters</summary>
           <div class="menu">
@@ -91,6 +93,7 @@
             <label><input type="checkbox" data-filter="tableCalcOnly" /> Table Calcs only</label>
           </div>
         </details>
+        <!-- Export dropdown for documentation downloads -->
         <details class="dropdown" id="export-dropdown">
           <summary>Export</summary>
           <div class="menu">
@@ -104,12 +107,15 @@
       </div>
     </header>
 
+    <!-- Main layout: sidebar lists, graph canvas, and details panel -->
     <main class="layout">
+      <!-- Sidebar with drop zone and workbook navigation tabs -->
       <aside class="sidebar">
         <section id="dropZone" class="dropzone" aria-label="Workbook drop zone" tabindex="0">
           <input id="fileInput" type="file" accept=".twb,.twbx" hidden />
           <p>Drop a Tableau .twb or .twbx file here<br />or click Open Workbook.</p>
         </section>
+        <!-- Sidebar tabs allow switching between node, sheet, calc, and parameter lists -->
         <nav class="tabs" aria-label="Sidebar tabs">
           <button type="button" data-tab="panel-nodes" class="tab active">Nodes</button>
           <button type="button" data-tab="panel-sheets" class="tab">Sheets</button>
@@ -130,11 +136,13 @@
         </section>
       </aside>
 
+      <!-- Cytoscape graph container and status overlay -->
       <section class="graphwrap">
         <div id="graph" aria-label="Graph canvas"></div>
         <div id="status" class="status">No workbook loaded.</div>
       </section>
 
+      <!-- Details pane surfaces metadata for the selected node -->
       <aside class="details" id="details" aria-live="polite">
         <h2>No selection</h2>
         <p>Load a workbook and choose a node to see details.</p>

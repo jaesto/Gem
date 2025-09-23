@@ -1,3 +1,7 @@
+/* -------------------------------------------------------------------------- */
+/* Gem design tokens (palette, spacing, typography)                           */
+/* -------------------------------------------------------------------------- */
+
 :root {
   --label-outline: rgba(0, 0, 0, 0.65);
 }
@@ -56,6 +60,10 @@ html.light,
   --label-outline: rgba(255, 255, 255, 0.75);
 }
 
+/* -------------------------------------------------------------------------- */
+/* Global layout and typography                                               */
+/* -------------------------------------------------------------------------- */
+
 * {
   box-sizing: border-box;
 }
@@ -100,6 +108,10 @@ summary {
   box-shadow: var(--gem-shadow);
   backdrop-filter: blur(24px);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Top bar, buttons, and dropdown menus                                       */
+/* -------------------------------------------------------------------------- */
 
 .topbar {
   display: grid;
@@ -303,6 +315,10 @@ summary::-webkit-details-marker {
   accent-color: var(--gem-primary);
 }
 
+/* -------------------------------------------------------------------------- */
+/* Search form and hop selector                                               */
+/* -------------------------------------------------------------------------- */
+
 #search-form {
   display: flex;
   align-items: center;
@@ -356,6 +372,9 @@ summary::-webkit-details-marker {
   border-color: rgba(139, 92, 246, 0.45);
 }
 
+/* -------------------------------------------------------------------------- */
+/* Main layout shell: sidebar, graph area, details panel                      */
+/* -------------------------------------------------------------------------- */
 
 .layout {
   flex: 1;
@@ -397,6 +416,10 @@ summary::-webkit-details-marker {
   min-width: 360px;
   overflow: hidden;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Graph canvas, status pill, and drop zone                                   */
+/* -------------------------------------------------------------------------- */
 
 #graph,
 #graph-container,
@@ -459,6 +482,10 @@ summary::-webkit-details-marker {
   box-shadow: var(--gem-glow);
   color: var(--gem-text);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Sidebar tabs and list styling                                              */
+/* -------------------------------------------------------------------------- */
 
 .tabs {
   display: flex;
@@ -543,6 +570,10 @@ summary::-webkit-details-marker {
   overflow-y: auto;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Details pane content                                                       */
+/* -------------------------------------------------------------------------- */
+
 .details h2 {
   margin-top: 0;
 }
@@ -553,6 +584,10 @@ summary::-webkit-details-marker {
   border-radius: var(--radius);
   overflow-x: auto;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Footer status bar                                                          */
+/* -------------------------------------------------------------------------- */
 
 .status-bar {
   display: flex;
@@ -573,6 +608,10 @@ summary::-webkit-details-marker {
 .status-bar span:last-child {
   color: var(--gem-muted);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Error overlay and utility helpers                                          */
+/* -------------------------------------------------------------------------- */
 
 #errOverlay {
   position: fixed;
@@ -610,6 +649,10 @@ summary::-webkit-details-marker {
   opacity: 0.18;
   transition: opacity 160ms ease;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Responsive adjustments and motion preferences                              */
+/* -------------------------------------------------------------------------- */
 
 @media (max-width: 980px) {
   .topbar {
