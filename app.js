@@ -1,3 +1,19 @@
+/**
+ * Gem runtime flow:
+ * 1. Wait for DOMContentLoaded, then boot the Cytoscape graph and wire UI controls.
+ * 2. Accept workbook uploads (drag/drop or picker) and parse them entirely in the browser.
+ * 3. Build a normalized node/edge graph, render it via Cytoscape, and populate sidebar lists.
+ * 4. Respond to user interactions (layouts, filters, hops, isolated mode, theme, search).
+ * 5. Provide export helpers that serialize metadata or the graph to local downloads.
+ */
+
+/**
+ * @typedef {'Field'|'CalculatedField'|'Worksheet'|'Dashboard'|'Parameter'} NodeType
+ * @typedef {{ id:string, name:string, type:NodeType }} Node
+ * @typedef {{ id:string, source:string, target:string, label:string }} Edge
+ * @typedef {{ nodes:Node[], edges:Edge[] }} WorkbookGraph
+ */
+
 const state = {
   cy: null,
   meta: null,
@@ -24,8 +40,16 @@ const state = {
   graphResizeObserver: null,
 };
 
+// Strip Tableau's square-bracket notation when normalizing names.
 const NAME_NORMALIZER = /[\[\]]/g;
 
+/**
+ * Reads a CSS custom property from the document root.
+ * Falls back to the provided value when running outside the browser (tests).
+ * @param {string} name
+ * @param {string} [fallback]
+ * @returns {string}
+ */
 function cssVar(name, fallback) {
   if (typeof window === 'undefined' || !window.getComputedStyle) {
     return fallback;
@@ -34,6 +58,10 @@ function cssVar(name, fallback) {
   return v || fallback;
 }
 
+/**
+ * Derives Cytoscape colors from CSS variables so theme toggles stay in sync.
+ * @returns {{text:string, outline:string, edge:string, calc:string, field:string, sheet:string, dash:string, param:string}}
+ */
 function themeColors() {
   return {
     text: cssVar('--gem-text', '#EAEAF0'),
@@ -47,11 +75,20 @@ function themeColors() {
   };
 }
 
+/**
+ * Updates the layout dropdown button label to reflect the active layout choice.
+ * @param {string} label
+ */
 function setLayoutButton(label) {
   const btn = document.getElementById('layoutMenuBtn');
   if (btn) btn.textContent = `Layout: ${label} ▾`;
 }
 
+/**
+ * Displays an error overlay and logs the details for debugging.
+ * @param {string} msg
+ * @param {Error|string} [err]
+ */
 function showError(msg, err) {
   const el = document.getElementById('errOverlay');
   if (!el) return;
@@ -91,6 +128,9 @@ try {
 
 const layoutName = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
 
+/**
+ * Applies theme-aware node and edge styling to the Cytoscape instance.
+ */
 function applyCyTheme() {
   if (!state.cy) return;
   const c = themeColors();
@@ -150,6 +190,10 @@ function applyCyTheme() {
   ]);
 }
 
+/**
+ * Fits the Cytoscape viewport to all currently visible elements.
+ * @param {number} [pad]
+ */
 function fitAll(pad = 80) {
   if (!state.cy) return;
   requestAnimationFrame(() => {
@@ -160,6 +204,11 @@ function fitAll(pad = 80) {
   });
 }
 
+/**
+ * Helper to fetch elements by a list of fallback IDs (legacy support).
+ * @param {...string} ids
+ * @returns {HTMLElement|null}
+ */
 function getEl(...ids) {
   for (const id of ids) {
     const element = document.getElementById(id);
@@ -179,6 +228,10 @@ document.addEventListener('DOMContentLoaded', () => {
   setStatus('Ready. Drop a Tableau workbook to begin.');
 });
 
+/**
+ * Wires toolbar buttons, dropdowns, and keyboard shortcuts to stateful handlers.
+ * The listeners only manipulate state and never block, so they keep the UI responsive.
+ */
 function bindUI() {
   const openBtn = getEl('openBtn', 'open-workbook-btn');
   const fileInput = getEl('fileInput', 'file-input');
@@ -213,6 +266,7 @@ function bindUI() {
         }
       } finally {
         if (input) {
+          // Reset the file input so the same workbook can be re-uploaded.
           input.value = '';
         }
       }
@@ -248,6 +302,7 @@ function bindUI() {
         const dt = event.dataTransfer;
         let file = dt?.files?.[0] || null;
         if (!file && dt?.items?.length) {
+          // Support dragging from apps that populate dataTransfer.items instead of files[].
           const item = Array.from(dt.items).find((entry) => entry.kind === 'file');
           if (item) {
             file = item.getAsFile();
@@ -341,6 +396,7 @@ function bindUI() {
           return;
         }
         const mode = button.dataset.export;
+        // Export router: delegate to JSON, Markdown, or DOT serializers.
         switch (mode) {
           case 'workbook-json':
             downloadBlob('workbook_doc.json', JSON.stringify(state.meta, null, 2), 'application/json');
@@ -403,6 +459,7 @@ function bindUI() {
     });
   }
 
+  // Sidebar tabs are plain buttons; this keeps the markup accessible without a JS framework.
   document.querySelectorAll('.tabs button').forEach((button) => {
     button.addEventListener('click', () => {
       document.querySelectorAll('.tabs button').forEach((b) => b.classList.remove('active'));
@@ -416,6 +473,7 @@ function bindUI() {
     });
   });
 
+  // Global keyboard shortcuts for search focus and fit-to-view.
   document.addEventListener('keydown', (event) => {
     if (event.key === '/' && searchBox && document.activeElement !== searchBox) {
       event.preventDefault();
@@ -435,6 +493,10 @@ function bindUI() {
   updateFooter();
 }
 
+/**
+ * Creates the Cytoscape instance once and configures shared interaction handlers.
+ * Subsequent workbook loads reuse this instance to avoid reinitializing extensions.
+ */
 function bootGraph() {
   const graphContainerEl = document.getElementById('graph');
   if (!graphContainerEl) {
@@ -513,6 +575,7 @@ function bootGraph() {
         state.cy.resize();
       }
     });
+    // Keep Cytoscape sized with CSS-driven layout changes.
     ro.observe(graphContainerEl);
     state.graphResizeObserver = ro;
   }
@@ -533,12 +596,22 @@ function bootGraph() {
   });
 }
 
+/**
+ * Updates the floating status badge with contextual messaging.
+ * @param {string} text
+ */
 function setStatus(text) {
   const statusEl = document.getElementById('status');
   if (!statusEl) return;
   statusEl.textContent = text;
 }
 
+/**
+ * Reads a user-provided workbook, supporting both `.twb` and `.twbx` archives.
+ * Parses metadata, builds the graph, and refreshes UI panels.
+ * @param {File} file
+ * @returns {Promise<void>}
+ */
 async function handleFile(file) {
   if (!file) {
     const error = new Error('No file provided.');
@@ -580,6 +653,7 @@ async function handleFile(file) {
         setStatus('Failed to read workbook: No .twb found inside .twbx.');
         return;
       }
+      // Tableau packaged workbooks store the XML as the first .twb entry in the zip archive.
       workbookText = await workbookEntry.async('text');
     } else {
       workbookText = await file.text();
@@ -615,6 +689,12 @@ async function handleFile(file) {
   }
 }
 
+/**
+ * Parses Tableau workbook XML into normalized metadata collections.
+ * Handles datasources, parameters, worksheets, dashboards, and lineage links.
+ * @param {string} xmlText
+ * @returns {object|null}
+ */
 function parseWorkbookXML(xmlText) {
   const parser = new DOMParser();
   const xml = parser.parseFromString(xmlText, 'text/xml');
@@ -647,6 +727,7 @@ function parseWorkbookXML(xmlText) {
       fields: [],
     };
 
+    // Tableau columns describe both base fields and calculated fields in each datasource.
     const columnNodes = Array.from(datasourceNode.querySelectorAll('column'));
     columnNodes.forEach((columnNode, columnIndex) => {
       const fieldName = getAttr(columnNode, 'caption') || getAttr(columnNode, 'name') || `Field ${columnIndex + 1}`;
@@ -760,11 +841,22 @@ function parseWorkbookXML(xmlText) {
   return meta;
 }
 
+/**
+ * Safely reads an attribute from an XML node, returning empty string when missing.
+ * @param {Element|null} node
+ * @param {string} attr
+ * @returns {string}
+ */
 function getAttr(node, attr) {
   if (!node) return '';
   return node.getAttribute(attr) || '';
 }
 
+/**
+ * Pulls field and parameter tokens out of a Tableau calculation formula string.
+ * @param {string} formula
+ * @returns {{fields:string[], parameters:string[]}}
+ */
 function extractCalculationReferences(formula) {
   if (!formula) {
     return { fields: [], parameters: [] };
@@ -782,6 +874,11 @@ function extractCalculationReferences(formula) {
   return { fields, parameters };
 }
 
+/**
+ * Removes duplicate [from,to] tuples while preserving insertion order.
+ * @param {Array<[string,string]>} pairs
+ * @returns {Array<[string,string]>}
+ */
 function dedupePairs(pairs) {
   const seen = new Set();
   const result = [];
@@ -795,18 +892,26 @@ function dedupePairs(pairs) {
   return result;
 }
 
+/**
+ * Converts parsed workbook metadata into the Cytoscape-friendly graph structure.
+ * Generates unique node IDs, tracks lookup maps, and creates lineage edges.
+ * @param {object} meta
+ * @returns {WorkbookGraph}
+ */
 function buildGraphJSON(meta) {
   state.nodeIndex = new Map();
   state.lookupEntries = [];
   state.lookupMap = new Map();
   state.nameToId = new Map();
 
+  // Collections that ultimately drive Cytoscape and the search/autocomplete UI.
   const nodes = [];
   const edges = [];
   const edgeKeys = new Set();
   const lookupEntries = [];
   const usedIds = new Set();
 
+  // Tableau objects can share captions; track them by normalized name for fuzzy matching.
   const nameToIds = {
     Field: new Map(),
     CalculatedField: new Map(),
@@ -815,6 +920,7 @@ function buildGraphJSON(meta) {
     Parameter: new Map(),
   };
 
+  // Usage maps allow us to attach "where used" lists to nodes without additional passes later.
   const fieldUsage = new Map();
   const fieldFeeds = new Map();
   const paramUsage = new Map();
@@ -858,6 +964,7 @@ function buildGraphJSON(meta) {
     if (!slug) slug = `${prefix}-${usedIds.size + 1}`;
     let id = `${prefix}:${slug}`;
     let counter = 2;
+    // Ensure node IDs remain unique even when captions collide.
     while (usedIds.has(id)) {
       id = `${prefix}:${slug}-${counter}`;
       counter += 1;
@@ -882,6 +989,7 @@ function buildGraphJSON(meta) {
       label: `${node.name} (${node.type})`,
       id: node.id,
     });
+    // Fast lookup maps keep search responsive for large workbooks.
     if (!state.nameToId.has(key)) {
       state.nameToId.set(key, node.id);
     }
@@ -923,6 +1031,7 @@ function buildGraphJSON(meta) {
         formula: field.calculation ? field.calculation.formula || '' : '',
         calcClass: field.calculation ? field.calculation.class || '' : '',
       };
+      // Regex heuristics capture LOD and table-calculation flags for filtering.
       node.isLOD = node.formula ? /\{\s*(FIXED|INCLUDE|EXCLUDE)/i.test(node.formula) : false;
       node.isTableCalc = node.formula ? /\b(WINDOW_|RUNNING_|LOOKUP|INDEX|RANK)\b/i.test(node.formula) : false;
       node.usedInWorksheets = Array.from(fieldUsage.get(normalizeName(baseName)) || []);
@@ -1021,11 +1130,17 @@ function buildGraphJSON(meta) {
     });
   });
 
+  // Sorted entries drive datalist suggestions and fuzzy text searches.
   state.lookupEntries = lookupEntries.sort((a, b) => a.label.localeCompare(b.label));
 
   return { nodes, edges };
 }
 
+/**
+ * Normalizes Tableau captions for case-insensitive lookup and deduping.
+ * @param {string} name
+ * @returns {string}
+ */
 function normalizeName(name) {
   return (name || '')
     .replace(NAME_NORMALIZER, '')
@@ -1034,10 +1149,20 @@ function normalizeName(name) {
     .toLowerCase();
 }
 
+/**
+ * Produces a friendly label by removing Tableau's square-bracket prefixes.
+ * @param {string} name
+ * @returns {string}
+ */
 function displayName(name) {
   return (name || '').replace(NAME_NORMALIZER, '').trim() || name;
 }
 
+/**
+ * Creates a slug-safe string for use in node IDs.
+ * @param {string} text
+ * @returns {string}
+ */
 function slugify(text) {
   return (text || '')
     .toLowerCase()
@@ -1046,6 +1171,11 @@ function slugify(text) {
     .replace(/^-+|-+$/g, '');
 }
 
+/**
+ * Clears the Cytoscape canvas and draws the provided graph elements.
+ * Also refreshes selection state, layout defaults, and isolation mode.
+ * @param {WorkbookGraph} graph
+ */
 function drawGraph(graph) {
   if (!state.cy) return;
   const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
@@ -1120,6 +1250,10 @@ function drawGraph(graph) {
   console.log('Graph ready:', state.cy.nodes().length, 'nodes /', state.cy.edges().length, 'edges');
 }
 
+/**
+ * Shows/hides nodes based on the active filter state and recalculates isolation mode.
+ * @param {{rerunLayout?:boolean}} [options]
+ */
 function applyFilters(options = {}) {
   if (!state.cy) return;
   state.cy.batch(() => {
@@ -1150,6 +1284,11 @@ function applyFilters(options = {}) {
   fitAll(80);
 }
 
+/**
+ * Expands the closed neighborhood around the selected node by N hops.
+ * Falls back to the UI dropdown value when depth is omitted.
+ * @param {number} [depth]
+ */
 function expandNeighbors(depth) {
   if (!state.cy) return;
   const hopSelect = document.getElementById('hopSelect');
@@ -1187,6 +1326,11 @@ function expandNeighbors(depth) {
   fitAll(80);
 }
 
+/**
+ * Fits the viewport to a specific Cytoscape collection while respecting visibility.
+ * @param {cy.Collection} elements
+ * @param {number} [padding]
+ */
 function fitToElements(elements, padding = 80) {
   if (!state.cy) return;
   const visible = elements.filter(':visible');
@@ -1197,6 +1341,9 @@ function fitToElements(elements, padding = 80) {
   }
 }
 
+/**
+ * Applies the default force-directed layout (Bilkent when available).
+ */
 function runForceLayout() {
   if (!state.cy) return;
   const nm = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
@@ -1215,6 +1362,9 @@ function runForceLayout() {
   setLayoutButton('Force');
 }
 
+/**
+ * Applies Cytoscape's grid layout for dense workbook maps.
+ */
 function runGridLayout() {
   if (!state.cy) return;
   state.cy.layout({ name: 'grid', fit: true, avoidOverlap: true, condense: true, padding: 80 }).run();
@@ -1223,6 +1373,9 @@ function runGridLayout() {
   setLayoutButton('Grid');
 }
 
+/**
+ * Uses a breadth-first layout to highlight dashboard/worksheet hierarchy.
+ */
 function runHierarchyLayout() {
   if (!state.cy) return;
   const roots = state.cy.$('node[type = "Dashboard"]').length
@@ -1245,6 +1398,9 @@ function runHierarchyLayout() {
   setLayoutButton('Hierarchy');
 }
 
+/**
+ * Places nodes into concentric rings ordered by node type.
+ */
 function runCenteredHierarchyLayout() {
   if (!state.cy) return;
   const rank = { Dashboard: 3, Worksheet: 2, Field: 1, CalculatedField: 1, Parameter: 1 };
@@ -1267,6 +1423,9 @@ function runCenteredHierarchyLayout() {
   setLayoutButton('Centered');
 }
 
+/**
+ * Centers concentric rings around the current selection (or fallbacks).
+ */
 function runCenteredFromSelectionLayout() {
   if (!state.cy) return;
   const cy = state.cy;
@@ -1321,6 +1480,7 @@ function runCenteredFromSelectionLayout() {
   setLayoutButton(`Centered from ${rootName}`);
 }
 
+// Lightweight controller for the custom layout dropdown menu.
 (function bindLayoutMenu() {
   const dd = document.getElementById('layoutDropdown');
   const btn = document.getElementById('layoutMenuBtn');
@@ -1355,6 +1515,11 @@ function runCenteredFromSelectionLayout() {
   });
 })();
 
+/**
+ * Synchronizes button labels and menu state for the isolated-node controls.
+ * @param {string} mode
+ * @returns {string}
+ */
 function syncIsolatedUI(mode) {
   const labels = {
     hide: 'Hide',
@@ -1385,6 +1550,10 @@ function syncIsolatedUI(mode) {
   return resolved;
 }
 
+/**
+ * Applies the chosen isolated-node mode (hide/cluster/scatter/unhide).
+ * @param {string} mode
+ */
 function setIsolatedMode(mode) {
   const previous = state.isolatedMode || 'unhide';
   const resolved = syncIsolatedUI(mode || previous || 'unhide');
@@ -1416,6 +1585,7 @@ function setIsolatedMode(mode) {
     const islandH = 260;
     const x1 = bb.x2 + pad;
     const y1 = Math.max(bb.y1, bb.y2 - islandH);
+    // Cluster isolated nodes in a side grid so they remain visible but unobtrusive.
     iso
       .layout({
         name: 'grid',
@@ -1432,6 +1602,12 @@ function setIsolatedMode(mode) {
   }
 }
 
+/**
+ * Returns the closed neighborhood around a Cytoscape node for a given hop depth.
+ * @param {cy.NodeSingular} node
+ * @param {number} [depth]
+ * @returns {cy.Collection}
+ */
 function getNeighborhood(node, depth = 1) {
   if (!node || typeof node.closedNeighborhood !== 'function') {
     return node;
@@ -1443,6 +1619,11 @@ function getNeighborhood(node, depth = 1) {
   return hood;
 }
 
+/**
+ * Focuses the graph on a node, highlighting its neighborhood and syncing UI panels.
+ * @param {string} id
+ * @param {{depth?:number, center?:boolean, fitPadding?:number, skipRelayout?:boolean}} [options]
+ */
 function focusOnNode(id, options = {}) {
   if (!state.cy) return;
   const node = state.cy.getElementById(id);
@@ -1483,6 +1664,10 @@ function focusOnNode(id, options = {}) {
   }
 }
 
+/**
+ * Finds the best node match for a search query and focuses it in the graph.
+ * @param {string} query
+ */
 function jumpToNode(query) {
   if (!state.cy) return;
   const normalized = normalizeName(query);
@@ -1500,6 +1685,11 @@ function jumpToNode(query) {
   focusOnNode(matchId, { depth: 1, center: true });
 }
 
+/**
+ * Populates sidebar lists for nodes, sheets, calculations, and parameters.
+ * Also refreshes the datalist used by the search box.
+ * @param {object} meta
+ */
 function populateLists(meta) {
   const nodesList = document.getElementById('list-nodes');
   const sheetsList = document.getElementById('list-sheets');
@@ -1529,6 +1719,7 @@ function populateLists(meta) {
   (meta.worksheets || []).forEach((worksheet) => {
     const worksheetIds = state.graph?.nodes.filter((node) => node.type === 'Worksheet' && node.rawName === worksheet.name) || [];
     const nodeId = worksheetIds.length ? worksheetIds[0].id : null;
+    // Worksheets can appear multiple times (dashboards). Use the first matching node ID.
     sheetsList.appendChild(createListItem(worksheet.name, nodeId));
   });
 
@@ -1551,6 +1742,12 @@ function populateLists(meta) {
   });
 }
 
+/**
+ * Builds a sidebar list item button that focuses the associated node on click.
+ * @param {string} label
+ * @param {string} [nodeId]
+ * @returns {HTMLLIElement}
+ */
 function createListItem(label, nodeId) {
   const li = document.createElement('li');
   const button = document.createElement('button');
@@ -1566,12 +1763,20 @@ function createListItem(label, nodeId) {
   return li;
 }
 
+/**
+ * Highlights the sidebar entry for the currently selected node.
+ * @param {string|null} nodeId
+ */
 function syncListSelection(nodeId) {
   document.querySelectorAll('.tab-panel button[data-node-id]').forEach((button) => {
     button.classList.toggle('active', button.dataset.nodeId === nodeId);
   });
 }
 
+/**
+ * Updates the right-hand details pane with metadata for the selected node.
+ * @param {object|null} nodeData
+ */
 function renderDetails(nodeData) {
   const panel = document.getElementById('details');
   if (!panel) return;
@@ -1653,12 +1858,23 @@ function renderDetails(nodeData) {
   panel.innerHTML = lines.join('');
 }
 
+/**
+ * Renders a titled unordered list for detail panel sections.
+ * @param {string} title
+ * @param {string[]} items
+ * @returns {string}
+ */
 function renderList(title, items) {
   if (!items || !items.length) return '';
   const li = items.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
   return `<h3>${escapeHtml(title)}</h3><ul>${li}</ul>`;
 }
 
+/**
+ * Escapes HTML special characters for safe template interpolation.
+ * @param {string} value
+ * @returns {string}
+ */
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -1668,6 +1884,11 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * Generates the Markdown export summarizing the workbook for human readers.
+ * @param {object} meta
+ * @returns {string}
+ */
 function buildMarkdown(meta) {
   const lines = [];
   lines.push('# Tableau Workbook Documentation');
@@ -1748,6 +1969,11 @@ function buildMarkdown(meta) {
   return lines.join('\n');
 }
 
+/**
+ * Builds a Graphviz DOT file representing field and sheet lineage edges.
+ * @param {object} meta
+ * @returns {string}
+ */
 function buildDot(meta) {
   const lines = [];
   lines.push('digraph Tableau {');
@@ -1763,6 +1989,12 @@ function buildDot(meta) {
   return lines.join('\n');
 }
 
+/**
+ * Triggers a browser download for generated text/blob content.
+ * @param {string} filename
+ * @param {string|BlobPart} content
+ * @param {string} [mime]
+ */
 function downloadBlob(filename, content, mime = 'text/plain') {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -1775,6 +2007,11 @@ function downloadBlob(filename, content, mime = 'text/plain') {
   URL.revokeObjectURL(url);
 }
 
+/**
+ * Converts byte counts into a human-readable string.
+ * @param {number} bytes
+ * @returns {string}
+ */
 function formatBytes(bytes) {
   if (!bytes && bytes !== 0) return '—';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -1787,6 +2024,9 @@ function formatBytes(bytes) {
   return `${value.toFixed(value > 9 ? 0 : 1)} ${unit}`;
 }
 
+/**
+ * Refreshes the footer with file metadata and build timestamp.
+ */
 function updateFooter() {
   const footer = document.getElementById('footer-info');
   if (!footer) return;
