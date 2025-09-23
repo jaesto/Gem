@@ -19,7 +19,9 @@
     <header class="topbar">
       <div class="left">
         <a class="brand" href="./">
-          <img id="brandLogo" alt="Gem" />
+          <img id="brandLogo"
+               src="/Gem/assets/gem-logo.png?v=4"
+               alt="Gem" width="28" height="28" />
           <span class="brand-name">Gem</span>
         </a>
         <button class="btn" id="openBtn" type="button">Open Workbook</button>
@@ -145,15 +147,6 @@
 
     <div id="errOverlay"></div>
 
-    <script>
-      (function () {
-        const logoEl = document.getElementById('brandLogo');
-        if (!logoEl) return;
-        // Always use the PNG from assets (with cache-busting)
-        logoEl.src = './assets/gem-logo.png?v=4';
-        logoEl.decoding = 'async';
-})();
-    </script>
     <script src="./lib/jszip.min.js"></script>
     <script src="./lib/cytoscape.min.js"></script>
     <script src="./lib/cytoscape-cose-bilkent.min.js"></script> <!-- keep if present -->
