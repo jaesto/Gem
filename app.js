@@ -1792,11 +1792,26 @@ function renderDetails(nodeData) {
   if (nodeData.datatype) infoBits.push(`Type: ${escapeHtml(nodeData.datatype)}`);
   lines.push(`<p class="detail-type">${infoBits.join(' • ')}</p>`);
 
+  let formulaInfo = null;
   if (nodeData.type === 'CalculatedField') {
-    if (nodeData.formula) {
-      lines.push('<h3>Formula</h3>');
-      lines.push(`<pre><code>${escapeHtml(nodeData.formula)}</code></pre>`);
-    }
+    const rawFormulaText =
+      nodeData.formula ||
+      nodeData.expression ||
+      nodeData.caption ||
+      nodeData.rawFormula ||
+      '';
+    const formulaDisplayText = rawFormulaText ? String(rawFormulaText) : '—';
+    const normalizedFormula = String(rawFormulaText).toUpperCase();
+    formulaInfo = {
+      text: formulaDisplayText,
+      hasLODBadge: normalizedFormula.includes('{') && normalizedFormula.includes('}'),
+      hasTableCalcBadge:
+        Boolean(nodeData.isTableCalc) ||
+        normalizedFormula.includes('WINDOW_') ||
+        normalizedFormula.includes('RUNNING_'),
+    };
+    lines.push('<h3 class="formula-heading">Formula</h3>');
+    lines.push('<pre class="formula"></pre>');
     const flags = [];
     if (nodeData.isLOD) flags.push('LOD');
     if (nodeData.isTableCalc) flags.push('Table Calc');
@@ -1856,6 +1871,30 @@ function renderDetails(nodeData) {
   }
 
   panel.innerHTML = lines.join('');
+
+  // Render formulas via textContent so user-authored markup never executes and their spacing stays intact.
+  // Chip detection leans on brace/keyword heuristics (plus the node flags) to highlight LOD and Table Calc formulas.
+  if (formulaInfo) {
+    const formulaEl = panel.querySelector('.formula');
+    if (formulaEl) {
+      formulaEl.textContent = formulaInfo.text;
+    }
+    const headingEl = panel.querySelector('.formula-heading');
+    if (headingEl) {
+      if (formulaInfo.hasLODBadge) {
+        const lodChip = document.createElement('span');
+        lodChip.className = 'chip chip-lod';
+        lodChip.textContent = 'LOD';
+        headingEl.appendChild(lodChip);
+      }
+      if (formulaInfo.hasTableCalcBadge) {
+        const tableChip = document.createElement('span');
+        tableChip.className = 'chip chip-table';
+        tableChip.textContent = 'Table Calc';
+        headingEl.appendChild(tableChip);
+      }
+    }
+  }
 }
 
 /**

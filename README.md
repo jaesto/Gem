@@ -49,6 +49,19 @@ Supported files: Tableau `.twb` (XML) and `.twbx` (packaged) workbooks.
 - **Theme** (`themeBtn`): Switch between Dark and Light themes for the current session.
 - **Drag/Zoom**: Pan with the mouse, scroll to zoom, and drag nodes to adjust their placement.
 
+### Details panel
+
+The right-hand `details` pane mirrors the selected node, showing its type, datasource, and any
+related worksheets or dashboards so you can trace dependencies without leaving the graph.
+
+#### Formula display
+
+Formulas render inside a `<pre>` block as plain text, so Tableau syntax like `<` and `>` stays
+visible and any user-authored HTML is escaped automatically. The Formula heading displays **LOD** and
+**Table Calc** chips whenever the expression uses `{}` level-of-detail braces, the table-calculation
+flag is set, or `WINDOW_`/`RUNNING_` keywords appear. Long expressions wrap, break on extended tokens,
+and scroll inside a 240px container, keeping every character legible without overflowing the panel.
+
 ## 4. Exports
 
 - `workbook_doc.json`: Structured metadata for the full workbook (fields, calculated fields,
