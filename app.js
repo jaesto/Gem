@@ -605,9 +605,10 @@ async function handleFiles(fileList) {
     state.meta = parsed;
     state.fileInfo = { name: file.name, size: file.size };
 
-    const graph = buildGraph(parsed);
-    validateGraph(graph);
+    const rawGraph = buildGraph(parsed);
+    const graph = normalizeGraph(rawGraph);
     state.graph = graph;
+    syncGraphLookups(graph);
 
     populateLists(parsed);
     drawGraph(graph);
@@ -1227,53 +1228,156 @@ function buildGraph(meta) {
 }
 
 /**
- * Verifies graph node/edge integrity and ID invariants before rendering.
- * @param {WorkbookGraph} graph
+ * Repairs malformed graph payloads before Cytoscape rendering.
+ * Ensures nodes/edges have required IDs and that edge endpoints exist.
+ * @param {WorkbookGraph|{nodes?:any[], edges?:any[]}} graph
  * @returns {WorkbookGraph}
  */
-function validateGraph(graph) {
-  if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
-    throw new Error('Invalid graph payload: nodes/edges missing.');
+function normalizeGraph(graph) {
+  if (!graph) {
+    return { nodes: [], edges: [] };
   }
 
+  const normalizedNodes = [];
+  const normalizedEdges = [];
   const nodeIds = new Set();
-  graph.nodes.forEach((node, index) => {
-    if (!node || typeof node.id !== 'string' || !node.id.trim()) {
-      throw new Error(`Graph node at index ${index} is missing a stable id.`);
+
+  const rawNodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+  rawNodes.forEach((rawNode) => {
+    if (!rawNode || typeof rawNode !== 'object') {
+      console.warn('[normalizeGraph] skipping invalid node', rawNode);
+      return;
     }
-    const id = node.id.trim();
+
+    const nodeData = (rawNode.data && typeof rawNode.data === 'object') ? { ...rawNode.data } : {};
+    let id = typeof rawNode.id === 'string' ? rawNode.id : nodeData.id;
+    if (typeof id === 'string') id = id.trim();
+
+    if (!id) {
+      console.warn('[normalizeGraph] skipping node with no id', rawNode);
+      return;
+    }
+
     if (nodeIds.has(id)) {
-      throw new Error(`Duplicate node id detected: ${id}`);
+      console.warn('[normalizeGraph] duplicate node id', id);
+      return;
     }
+
+    const nameSource = (typeof rawNode.name === 'string' && rawNode.name.trim()) ? rawNode.name : nodeData.name;
+    const name = (typeof nameSource === 'string' && nameSource.trim()) ? nameSource.trim() : id;
+    const type = rawNode.type || nodeData.type || 'Unknown';
+
+    const normalizedNode = {
+      ...rawNode,
+      id,
+      name,
+      type,
+      data: {
+        ...nodeData,
+        id,
+        name,
+        type,
+      },
+    };
+
+    normalizedNodes.push(normalizedNode);
     nodeIds.add(id);
-    if (node.rawId && node.rawId !== id) {
-      console.warn('[Graph] rawId mismatch, normalizing to id', id, node.rawId);
-      node.rawId = id;
-    }
-    if (typeof node.name !== 'string' || !node.name.trim()) {
-      console.warn('[Graph] Node missing friendly name for id', id);
-      node.name = node.name || id;
-    }
   });
 
+  const rawEdges = Array.isArray(graph.edges) ? graph.edges : [];
   const edgeIds = new Set();
-  graph.edges.forEach((edge, index) => {
-    if (!edge || typeof edge.id !== 'string' || !edge.id.trim()) {
-      throw new Error(`Graph edge at index ${index} is missing an id.`);
+  rawEdges.forEach((rawEdge) => {
+    if (!rawEdge || typeof rawEdge !== 'object') {
+      console.warn('[normalizeGraph] skipping invalid edge', rawEdge);
+      return;
     }
-    if (edgeIds.has(edge.id)) {
-      throw new Error(`Duplicate edge id detected: ${edge.id}`);
+
+    const edgeData = (rawEdge.data && typeof rawEdge.data === 'object') ? { ...rawEdge.data } : {};
+    let source = rawEdge.source || edgeData.source;
+    let target = rawEdge.target || edgeData.target;
+    if (typeof source === 'string') source = source.trim();
+    if (typeof target === 'string') target = target.trim();
+
+    if (!source || !target) {
+      console.warn('[normalizeGraph] skipping edge missing endpoints', rawEdge);
+      return;
     }
-    edgeIds.add(edge.id);
-    if (!edge.source || !edge.target) {
-      throw new Error(`Edge ${edge.id} missing source/target.`);
+
+    if (!nodeIds.has(source) || !nodeIds.has(target)) {
+      console.warn('[normalizeGraph] skipping edge with unknown endpoint', rawEdge);
+      return;
     }
-    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
-      throw new Error(`Edge ${edge.id} references missing node(s): ${edge.source} -> ${edge.target}`);
+
+    let id = rawEdge.id || edgeData.id;
+    if (typeof id === 'string') id = id.trim();
+    if (!id) {
+      id = `${source}->${target}`;
     }
+    if (edgeIds.has(id)) {
+      let dedupeIndex = 2;
+      let candidate = `${id}#${dedupeIndex}`;
+      while (edgeIds.has(candidate)) {
+        dedupeIndex += 1;
+        candidate = `${id}#${dedupeIndex}`;
+      }
+      console.warn('[normalizeGraph] duplicate edge id detected, renaming', id, '->', candidate);
+      id = candidate;
+    }
+
+    const rel = rawEdge.rel || rawEdge.label || edgeData.rel || edgeData.label || rawEdge.type || '';
+
+    const normalizedEdge = {
+      ...rawEdge,
+      id,
+      source,
+      target,
+      rel,
+      data: {
+        ...edgeData,
+        id,
+        source,
+        target,
+        rel,
+        label: edgeData.label || rawEdge.label || rel,
+      },
+    };
+
+    normalizedEdges.push(normalizedEdge);
+    edgeIds.add(id);
   });
 
-  return graph;
+  console.debug('[normalizeGraph] final counts:', normalizedNodes.length, 'nodes;', normalizedEdges.length, 'edges');
+  return { nodes: normalizedNodes, edges: normalizedEdges };
+}
+
+/**
+ * Rebuilds lookup maps to reflect the normalized graph payload.
+ * @param {WorkbookGraph} graph
+ */
+function syncGraphLookups(graph) {
+  state.nodeIndex = new Map();
+  state.lookupEntries = [];
+  state.lookupMap = new Map();
+  state.nameToId = new Map();
+
+  (graph?.nodes || []).forEach((node) => {
+    if (!node || !node.id) return;
+    state.nodeIndex.set(node.id, node);
+    const key = normalizeName(node.rawName || node.name);
+    if (key && !state.nameToId.has(key)) {
+      state.nameToId.set(key, node.id);
+    }
+    if (node.name && !state.lookupMap.has(node.name)) {
+      state.lookupMap.set(node.name, node.id);
+    }
+    state.lookupEntries.push({
+      key,
+      label: `${node.name} (${node.type})`,
+      id: node.id,
+    });
+  });
+
+  state.lookupEntries.sort((a, b) => a.label.localeCompare(b.label));
 }
 
 /**
@@ -1370,8 +1474,13 @@ function drawGraph(graph) {
     nodeIdSet.add(node.id);
     const col = index % columns;
     const row = Math.floor(index / columns);
+    const cyData = { ...(node.data || {}), ...node };
+    delete cyData.data;
+    cyData.id = cyData.id || node.id;
+    cyData.name = cyData.name || node.name;
+    cyData.type = cyData.type || node.type;
     nodeEles.push({
-      data: { ...node },
+      data: cyData,
       position: {
         x: col * spacing - offsetX,
         y: row * spacing - offsetY,
@@ -1385,7 +1494,13 @@ function drawGraph(graph) {
       console.warn('Edge references missing node', edge);
       return;
     }
-    edgeEles.push({ data: { id: edge.id, source: edge.source, target: edge.target, rel: edge.rel || edge.type } });
+    const cyData = { ...(edge.data || {}), ...edge };
+    delete cyData.data;
+    cyData.id = cyData.id || edge.id;
+    cyData.source = cyData.source || edge.source;
+    cyData.target = cyData.target || edge.target;
+    cyData.rel = cyData.rel || cyData.label || edge.type || '';
+    edgeEles.push({ data: { id: cyData.id, source: cyData.source, target: cyData.target, rel: cyData.rel } });
   });
 
   if (edgeEles.length === 0) {

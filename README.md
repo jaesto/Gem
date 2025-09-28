@@ -139,6 +139,14 @@ Data types:
 - **New exports**: Extend the switch in the export handler, reusing patterns from `buildMarkdown`,
   `buildDot`, and `downloadBlob`.
 
+### Development notes
+
+- **Graph normalization**: Before rendering, uploaded workbook graphs are sanitized to guarantee
+  Cytoscape receives well-formed elements. Each node is rebuilt with `data.id`/`data.name`, duplicate
+  node IDs are dropped, edges pointing to unknown nodes are skipped, and any omissions trigger
+  console warnings so issues are easy to trace. This prevents Cytoscape runtime crashes when workbooks
+  contain malformed relationships.
+
 ## 9. Troubleshooting
 
 - `.twbx` files fail to open: Check the browser console for parsing errors and confirm the file
