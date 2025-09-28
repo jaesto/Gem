@@ -55,14 +55,17 @@
             <button class="menu-item" data-layout="centered-selected" role="menuitem">Centered from selection</button>
           </div>
         </div>
-        <label for="hopSelect" class="visually-hidden">Expand neighbors hops</label>
-        <select id="hopSelect" title="Expand neighbors this many hops">
-          <option value="1">1 hop</option>
-          <option value="2">2 hops</option>
-          <option value="3">3 hops</option>
-          <option value="4">4 hops</option>
-          <option value="5">5 hops</option>
-        </select>
+        <label for="hopBtn" class="visually-hidden">Expand neighbors hops</label>
+        <div class="dropdown" id="hopDropdown">
+          <button id="hopBtn" class="btn" type="button" title="Choose neighbor expansion">Hops ▾</button>
+          <div id="hopMenu" class="menu" role="menu" aria-label="Hop menu">
+            <button class="menu-item" data-hop="1" role="menuitem">1 hop</button>
+            <button class="menu-item" data-hop="2" role="menuitem">2 hops</button>
+            <button class="menu-item" data-hop="3" role="menuitem">3 hops</button>
+            <button class="menu-item" data-hop="4" role="menuitem">4 hops</button>
+            <button class="menu-item" data-hop="5" role="menuitem">5 hops</button>
+          </div>
+        </div>
         <div class="dropdown">
           <button
             id="isolatedBtn"

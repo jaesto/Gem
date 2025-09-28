@@ -48,11 +48,51 @@ const state = {
   buildTimestamp: new Date().toISOString(),
   selectedNodeId: null,
   lastFocusDepth: 1,
+  hops: 1,
   graphResizeObserver: null,
 };
 
 // Strip Tableau's square-bracket notation when normalizing names.
 const NAME_NORMALIZER = /[\[\]]/g;
+
+const HOP_MIN = 1;
+const HOP_MAX = 5;
+
+let onHopChange = null;
+
+function clampHop(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return HOP_MIN;
+  return Math.max(HOP_MIN, Math.min(Math.round(numeric), HOP_MAX));
+}
+
+function setHopUI(hops) {
+  if (typeof document === 'undefined') return;
+  const btn = document.getElementById('hopBtn');
+  const menu = document.getElementById('hopMenu');
+  const normalized = clampHop(hops);
+  if (btn) {
+    btn.textContent = `${normalized} hop${normalized > 1 ? 's' : ''} ▾`;
+    btn.dataset.hop = String(normalized);
+    btn.setAttribute('aria-label', `Expand neighbors ${normalized} hop${normalized > 1 ? 's' : ''}`);
+    btn.setAttribute('title', `Expand neighbors this many hops (Current: ${normalized})`);
+  }
+  if (menu) {
+    menu.querySelectorAll('[data-hop]').forEach((item) => {
+      const hopValue = clampHop(item.dataset.hop);
+      const active = hopValue === normalized;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+}
+
+function syncHopControl(value) {
+  const normalized = clampHop(value);
+  state.hops = normalized;
+  setHopUI(normalized);
+  return normalized;
+}
 
 /**
  * Reads a CSS custom property from the document root.
@@ -249,7 +289,6 @@ function bindUI() {
   const dropZone = document.getElementById('dropZone') || getEl('dropZone', 'dropzone');
   const fitBtn = getEl('fitBtn', 'fit-btn');
   const layoutBtn = getEl('layoutBtn', 'layout-btn');
-  const hopSelect = getEl('hopSelect');
   const isoBtn = getEl('isolatedBtn');
   const isoMenu = getEl('isolatedMenu');
   const themeToggle = getEl('themeBtn', 'theme-toggle');
@@ -317,14 +356,15 @@ function bindUI() {
     });
   }
 
-  if (hopSelect) {
-    hopSelect.addEventListener('change', () => {
-      const value = parseInt(hopSelect.value, 10);
-      if (!Number.isNaN(value)) {
-        expandNeighbors(value);
-      }
-    });
-  }
+  state.hops = clampHop(state.hops || state.lastFocusDepth || HOP_MIN);
+  syncHopControl(state.hops);
+
+  onHopChange = (value) => {
+    const normalized = syncHopControl(value);
+    if (!Number.isNaN(normalized)) {
+      expandNeighbors(normalized);
+    }
+  };
 
   if (isoBtn && isoMenu) {
     const isoWrapper = isoBtn.parentElement;
@@ -1527,6 +1567,8 @@ function drawGraph(graph) {
   syncListSelection(null);
   state.selectedNodeId = null;
   state.lastFocusDepth = 1;
+  state.hops = HOP_MIN;
+  syncHopControl(state.hops);
 
   if (typeof setIsolatedMode === 'function') {
     setIsolatedMode('unhide');
@@ -1579,21 +1621,15 @@ function applyFilters(options = {}) {
  */
 function expandNeighbors(depth) {
   if (!state.cy) return;
-  const hopSelect = document.getElementById('hopSelect');
   let resolvedDepth = Number.isFinite(depth) ? depth : null;
-
-  if (!resolvedDepth && hopSelect) {
-    const selectValue = parseInt(hopSelect.value, 10);
-    if (!Number.isNaN(selectValue)) {
-      resolvedDepth = selectValue;
-    }
+  if (!resolvedDepth && Number.isFinite(state.hops)) {
+    resolvedDepth = state.hops;
+  }
+  if (!resolvedDepth && Number.isFinite(state.lastFocusDepth)) {
+    resolvedDepth = state.lastFocusDepth;
   }
 
-  if (!resolvedDepth || Number.isNaN(resolvedDepth)) {
-    resolvedDepth = 1;
-  }
-
-  resolvedDepth = Math.max(1, Math.min(Math.round(resolvedDepth), 5));
+  const normalizedDepth = syncHopControl(resolvedDepth ?? HOP_MIN);
 
   const selected = state.cy.$('node:selected');
   if (!selected.length) {
@@ -1601,14 +1637,7 @@ function expandNeighbors(depth) {
     return;
   }
   const node = selected[0];
-  focusOnNode(node.id(), { depth: resolvedDepth, center: true, skipRelayout: true });
-
-  if (hopSelect && hopSelect.value !== String(resolvedDepth)) {
-    const hasOption = Array.from(hopSelect.options).some((option) => option.value === String(resolvedDepth));
-    if (hasOption) {
-      hopSelect.value = String(resolvedDepth);
-    }
-  }
+  focusOnNode(node.id(), { depth: normalizedDepth, center: true, skipRelayout: true });
 
   setIsolatedMode(state.isolatedMode || 'unhide');
   fitAll(80);
@@ -1661,28 +1690,71 @@ function runGridLayout() {
   setLayoutButton('Grid');
 }
 
+function getHierarchyRootsAndLevels(cy) {
+  const nodes = cy.nodes();
+  const dashboards = nodes.filter('[type = "Dashboard"]');
+  const roots = dashboards.length ? dashboards : nodes.filter('[type = "Worksheet"]');
+
+  const rank = new Map();
+  const visited = new Set();
+  const queue = [];
+
+  roots.forEach((node) => {
+    rank.set(node.id(), 0);
+    visited.add(node.id());
+    queue.push({ node, level: 0 });
+  });
+
+  while (queue.length) {
+    const { node, level } = queue.shift();
+    const preds = node.incomers('node');
+    preds.forEach((pred) => {
+      const pid = pred.id();
+      if (visited.has(pid)) return;
+      visited.add(pid);
+      const nextLevel = level + 1;
+      rank.set(pid, nextLevel);
+      queue.push({ node: pred, level: nextLevel });
+    });
+  }
+
+  return { roots, rank };
+}
+
 /**
  * Uses a breadth-first layout to highlight dashboard/worksheet hierarchy.
  */
 function runHierarchyLayout() {
   if (!state.cy) return;
-  const roots = state.cy.$('node[type = "Dashboard"]').length
-    ? state.cy.$('node[type = "Dashboard"]')
-    : state.cy.$('node[type = "Worksheet"]');
-  state.cy
-    .layout({
-      name: 'breadthfirst',
-      directed: true,
-      circle: false,
-      spacingFactor: 1.2,
-      padding: 100,
-      fit: true,
-      animate: 'end',
-      roots,
-    })
-    .run();
-  state.cy.nodes().unlock();
-  state.cy.nodes().grabify();
+  const cy = state.cy;
+  const { roots, rank } = getHierarchyRootsAndLevels(cy);
+
+  cy.layout({
+    name: 'breadthfirst',
+    directed: true,
+    roots,
+    spacingFactor: 1.15,
+    nodeDimensionsIncludeLabels: true,
+    avoidOverlap: true,
+    padding: 20,
+    fit: true,
+    animate: false,
+    circle: false,
+  }).run();
+
+  const laneH = 120;
+  cy.nodes().positions((n) => {
+    const level = rank.get(n.id());
+    if (level == null) {
+      return n.position();
+    }
+    const pos = n.position();
+    return { x: pos.x, y: level * laneH + 40 };
+  });
+
+  cy.nodes().unlock();
+  cy.nodes().grabify();
+  cy.fit(cy.elements(), 40);
   setLayoutButton('Hierarchy');
 }
 
@@ -1767,6 +1839,52 @@ function runCenteredFromSelectionLayout() {
   const rootName = root?.data('name') || root?.id() || 'Selection';
   setLayoutButton(`Centered from ${rootName}`);
 }
+
+(function bindHopMenu() {
+  const dropdown = document.getElementById('hopDropdown');
+  const btn = document.getElementById('hopBtn');
+  const menu = document.getElementById('hopMenu');
+  if (!btn || !menu) return;
+
+  const close = () => {
+    menu.classList.remove('open');
+    if (dropdown) dropdown.classList.remove('open');
+    btn.setAttribute('aria-expanded', 'false');
+  };
+
+  const open = () => {
+    menu.classList.add('open');
+    if (dropdown) dropdown.classList.add('open');
+    btn.setAttribute('aria-expanded', 'true');
+  };
+
+  btn.setAttribute('aria-haspopup', 'menu');
+  btn.setAttribute('aria-expanded', 'false');
+
+  btn.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (menu.classList.contains('open')) {
+      close();
+    } else {
+      open();
+    }
+  });
+
+  menu.addEventListener('click', (event) => {
+    const item = event.target.closest('[data-hop]');
+    if (!item) return;
+    const hops = parseInt(item.dataset.hop, 10) || HOP_MIN;
+    if (typeof onHopChange === 'function') onHopChange(hops);
+    close();
+  });
+
+  document.addEventListener('click', (event) => {
+    if (event.target === btn) return;
+    if (menu.contains(event.target)) return;
+    close();
+  });
+})();
 
 // Lightweight controller for the custom layout dropdown menu.
 (function bindLayoutMenu() {
@@ -1929,16 +2047,7 @@ function focusOnNode(id, options = {}) {
 
   state.selectedNodeId = id;
   state.lastFocusDepth = depth;
-
-  const hopSelect = document.getElementById('hopSelect');
-  if (hopSelect) {
-    const normalizedDepth = Math.max(1, Math.min(Math.round(Number.isFinite(depth) ? depth : 1), 5));
-    const depthValue = String(normalizedDepth);
-    const hasOption = Array.from(hopSelect.options).some((option) => option.value === depthValue);
-    if (hasOption && hopSelect.value !== depthValue) {
-      hopSelect.value = depthValue;
-    }
-  }
+  syncHopControl(depth);
 
   if (options.center !== false) {
     fitToElements(neighborhood, options.fitPadding ?? 120);
