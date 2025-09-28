@@ -8,6 +8,14 @@
  */
 
 /**
+ * ID INVARIANTS
+ * - Node.id is ALWAYS the internal/stable ID from the workbook (Calculation_..., Field_..., Worksheet_...).
+ * - Node.data('name') is the FRIENDLY/DISPLAY name.
+ * - Edges use node.id for source/target. Never use display names for edge endpoints.
+ * This keeps the graph consistent while still showing human-readable labels.
+ */
+
+/**
  * @typedef {'Field'|'CalculatedField'|'Worksheet'|'Dashboard'|'Parameter'} NodeType
  * @typedef {{ id:string, name:string, type:NodeType }} Node
  * @typedef {{ id:string, source:string, target:string, label:string }} Edge
@@ -236,9 +244,9 @@ document.addEventListener('DOMContentLoaded', () => {
  * The listeners only manipulate state and never block, so they keep the UI responsive.
  */
 function bindUI() {
-  const openBtn = getEl('openBtn', 'open-workbook-btn');
-  const fileInput = getEl('fileInput', 'file-input');
-  const dropZone = getEl('dropZone', 'dropzone');
+  const openBtn = document.getElementById('openBtn') || getEl('openBtn', 'open-workbook-btn');
+  const fileInput = document.getElementById('fileInput') || getEl('fileInput', 'file-input');
+  const dropZone = document.getElementById('dropZone') || getEl('dropZone', 'dropzone');
   const fitBtn = getEl('fitBtn', 'fit-btn');
   const layoutBtn = getEl('layoutBtn', 'layout-btn');
   const hopSelect = getEl('hopSelect');
@@ -250,78 +258,47 @@ function bindUI() {
   const filtersDropdown = getEl('filtersDropdown', 'filters-dropdown');
   const exportDropdown = getEl('exportDropdown', 'export-dropdown');
 
-  if (openBtn && fileInput) {
-    openBtn.addEventListener('click', () => fileInput.click());
-  }
+  if (openBtn && fileInput) openBtn.onclick = () => fileInput.click();
 
   if (fileInput) {
-    fileInput.addEventListener('change', async (event) => {
-      const input = event.target;
-      const files = input?.files;
-      const file = files && files[0];
-      if (!file) return;
-      try {
-        await handleFile(file);
-      } catch (error) {
-        if (!error?.__handledByOverlay) {
-          showError('Failed to read workbook', error);
-          setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
-        }
-      } finally {
-        if (input) {
-          // Reset the file input so the same workbook can be re-uploaded.
-          input.value = '';
-        }
-      }
-    });
-  }
-
-  if (dropZone && fileInput) {
-    dropZone.addEventListener('click', () => fileInput.click());
-    dropZone.addEventListener('keypress', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        fileInput.click();
-      }
-    });
+    fileInput.onchange = () => {
+      handleFiles(fileInput.files);
+      // Reset so the same file can be selected consecutively.
+      fileInput.value = '';
+    };
   }
 
   if (dropZone) {
-    dropZone.addEventListener('dragenter', (event) => {
-      event.preventDefault();
-      dropZone.classList.add('dragover');
-    });
-    dropZone.addEventListener('dragover', (event) => {
-      event.preventDefault();
-      dropZone.classList.add('dragover');
-    });
-    dropZone.addEventListener('dragleave', () => {
-      dropZone.classList.remove('dragover');
-    });
-    dropZone.addEventListener('drop', async (event) => {
-      event.preventDefault();
-      dropZone.classList.remove('dragover');
-      try {
-        const dt = event.dataTransfer;
-        let file = dt?.files?.[0] || null;
-        if (!file && dt?.items?.length) {
-          // Support dragging from apps that populate dataTransfer.items instead of files[].
-          const item = Array.from(dt.items).find((entry) => entry.kind === 'file');
-          if (item) {
-            file = item.getAsFile();
-          }
+    if (fileInput) {
+      dropZone.addEventListener('click', () => fileInput.click());
+      dropZone.addEventListener('keypress', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          fileInput.click();
         }
-        if (!file) {
-          showError('No file dropped');
-          setStatus('No file dropped. Please provide a .twb or .twbx file.');
-          return;
-        }
-        await handleFile(file);
-      } catch (error) {
-        if (!error?.__handledByOverlay) {
-          showError('Failed to read workbook', error);
-          setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
-        }
+      });
+    }
+
+    ['dragenter', 'dragover'].forEach((evt) =>
+      dropZone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.add('drag');
+      })
+    );
+    ['dragleave', 'dragend'].forEach((evt) =>
+      dropZone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove('drag');
+      })
+    );
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropZone.classList.remove('drag');
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+        handleFiles(e.dataTransfer.files);
       }
     });
   }
@@ -610,104 +587,90 @@ function setStatus(text) {
 }
 
 /**
- * Reads a user-provided workbook, supporting both `.twb` and `.twbx` archives.
- * Parses metadata, builds the graph, and refreshes UI panels.
- * @param {File} file
- * @returns {Promise<void>}
+ * Single entry point for handling uploads or drops.
+ * @param {FileList|File[]} fileList
  */
-async function handleFile(file) {
-  if (!file) {
-    const error = new Error('No file provided.');
-    error.__handledByOverlay = true;
-    showError('Failed to read workbook', error);
-    setStatus('Failed to read workbook: No file provided.');
-    updateFooter();
-    return;
-  }
+async function handleFiles(fileList) {
+  if (!fileList || !fileList.length) return;
+  const file = fileList[0];
+  if (!file) return;
 
-  const fileName = file.name || 'Workbook';
-  const extension = (() => {
-    const name = file.name || '';
-    const dotIndex = name.lastIndexOf('.');
-    if (dotIndex === -1) {
-      return '';
-    }
-    return name.slice(dotIndex + 1).toLowerCase();
-  })();
-
-  if (extension !== 'twb' && extension !== 'twbx') {
-    setStatus('Unsupported file type. Please provide a .twb or .twbx file.');
-    updateFooter();
-    return;
-  }
-
-  setStatus(`Loading ${fileName}...`);
+  const displayName = file.name || 'Workbook';
 
   try {
-    let workbookText = '';
+    setStatus?.(`Loading: ${displayName}`);
+    const buf = await file.arrayBuffer();
+    const parsed = await parseWorkbookFile(file.name, buf);
+    parsed.workbook_path = file.name || 'Browser Upload';
+    state.meta = parsed;
+    state.fileInfo = { name: file.name, size: file.size };
 
-    if (extension === 'twbx') {
-      const buffer = await file.arrayBuffer();
-      const zip = await JSZip.loadAsync(buffer);
-      const entries = Object.values(zip.files || {});
-      const workbookEntry = entries.find((entry) => entry.name?.toLowerCase().endsWith('.twb'));
-      if (!workbookEntry) {
-        showError('No .twb found inside .twbx');
-        setStatus('Failed to read workbook: No .twb found inside .twbx.');
-        return;
-      }
-      // Tableau packaged workbooks store the XML as the first .twb entry in the zip archive.
-      workbookText = await workbookEntry.async('text');
-    } else {
-      workbookText = await file.text();
-    }
-
-    const meta = parseWorkbookXML(workbookText);
-    if (!meta) {
-      setStatus('Failed to read workbook: Unable to parse workbook XML.');
-      return;
-    }
-
-    meta.workbook_path = file.name || 'Browser Upload';
-    state.meta = meta;
-    state.fileInfo = {
-      name: file.name,
-      size: file.size,
-    };
-
-    const graph = buildGraphJSON(meta);
+    const graph = buildGraph(parsed);
+    validateGraph(graph);
     state.graph = graph;
-    populateLists(meta);
+
+    populateLists(parsed);
     drawGraph(graph);
-    setStatus(`Loaded ${fileName}`);
-  } catch (error) {
-    showError('Failed to read workbook', error);
-    setStatus(`Failed to read workbook: ${error?.message || 'Unknown error.'}`);
-    if (error && typeof error === 'object') {
-      error.__handledByOverlay = true;
-    }
-    throw error;
+    fitAll?.();
+
+    setStatus?.(`Loaded: ${displayName}`);
+    console.debug('[Open] Done. Nodes:', graph.nodes.length, 'Edges:', graph.edges.length);
+  } catch (err) {
+    console.error('[Open] Failed', file?.name, err);
+    showError('Failed to open workbook', err);
+    showErrorOverlay?.('Failed to open workbook. See console for details.');
+    setStatus?.('Open failed.');
   } finally {
     updateFooter();
   }
 }
 
 /**
- * Parses Tableau workbook XML into normalized metadata collections.
- * Handles datasources, parameters, worksheets, dashboards, and lineage links.
- * @param {string} xmlText
- * @returns {object|null}
+ * Determines the parser based on filename extension.
+ * @param {string} filename
+ * @param {ArrayBuffer} arrayBuffer
  */
-function parseWorkbookXML(xmlText) {
-  const parser = new DOMParser();
-  const xml = parser.parseFromString(xmlText, 'text/xml');
-  const errorNode = xml.querySelector('parsererror');
+async function parseWorkbookFile(filename, arrayBuffer) {
+  const lower = (filename || '').toLowerCase();
+  if (lower.endsWith('.twbx')) return parseTwbx(arrayBuffer);
+  if (lower.endsWith('.twb')) return parseTwb(arrayBuffer);
+  throw new Error('Unsupported file type: ' + filename);
+}
+
+async function parseTwbx(buf) {
+  console.debug('[Open] parseTwbx start');
+  const zip = await JSZip.loadAsync(buf);
+  const entry = Object.values(zip.files).find((f) => f.name.toLowerCase().endsWith('.twb'));
+  if (!entry) throw new Error('No .twb found inside .twbx');
+  const xml = await entry.async('text');
+  return parseTwbText(xml);
+}
+
+async function parseTwb(buf) {
+  console.debug('[Open] parseTwb start');
+  const xml = new TextDecoder('utf-8').decode(buf);
+  return parseTwbText(xml);
+}
+
+function parseTwbText(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+  const errorNode = doc.querySelector('parsererror');
   if (errorNode) {
     const message = errorNode.textContent?.trim() || 'Unable to parse workbook XML.';
-    const error = new Error(message);
-    error.__handledByOverlay = true;
-    showError('XML parse error', error);
-    return null;
+    throw new Error(message);
+  }
+  return parseFromXmlDocument(doc);
+}
+
+/**
+ * Parses Tableau workbook XML into normalized metadata collections.
+ * Handles datasources, parameters, worksheets, dashboards, and lineage links.
+ * @param {Document} xml
+ * @returns {object}
+ */
+function parseFromXmlDocument(xml) {
+  if (!xml || !xml.documentElement) {
+    throw new Error('Invalid workbook XML.');
   }
 
   const meta = {
@@ -744,7 +707,6 @@ function parseWorkbookXML(xmlText) {
       })),
     };
 
-    // Tableau columns describe both base fields and calculated fields in each datasource.
     const columnNodes = Array.from(datasourceNode.querySelectorAll('column'));
     columnNodes.forEach((columnNode, columnIndex) => {
       const fieldId = getAttr(columnNode, 'name') || '';
@@ -932,11 +894,11 @@ function dedupePairs(pairs) {
 
 /**
  * Converts parsed workbook metadata into the Cytoscape-friendly graph structure.
- * Generates unique node IDs, tracks lookup maps, and creates lineage edges.
+ * Enforces ID invariants, tracks lookup maps, and creates lineage edges.
  * @param {object} meta
  * @returns {WorkbookGraph}
  */
-function buildGraphJSON(meta) {
+function buildGraph(meta) {
   state.nodeIndex = new Map();
   state.lookupEntries = [];
   state.lookupMap = new Map();
@@ -999,7 +961,7 @@ function buildGraphJSON(meta) {
   }
 
   meta.datasources.forEach((datasource) => {
-    const dsId = datasource.rawId || datasource.id || datasource.name;
+    const dsId = cleanInternalId(datasource.rawId) || datasource.rawId || datasource.id || datasource.name;
     const dsLabel = friendlyDatasourceName(datasource);
     if (dsId) {
       datasourceLabels.set(dsId, dsLabel);
@@ -1058,18 +1020,31 @@ function buildGraphJSON(meta) {
     });
   });
 
-  function makeNodeId(prefix, baseName) {
-    let slug = slugify(baseName);
+  function cleanInternalId(rawId) {
+    if (!rawId) return '';
+    return rawId.trim().replace(NAME_NORMALIZER, '').trim();
+  }
+
+  function canonicalId(rawId, prefix, baseName) {
+    let candidate = cleanInternalId(rawId);
+    if (candidate) {
+      if (!usedIds.has(candidate)) {
+        usedIds.add(candidate);
+        return candidate;
+      }
+      console.warn('[Graph] Duplicate node id detected, generating fallback:', candidate);
+    }
+    const base = baseName || candidate || `${prefix}-${usedIds.size + 1}`;
+    let slug = slugify(base);
     if (!slug) slug = `${prefix}-${usedIds.size + 1}`;
-    let id = `${prefix}:${slug}`;
+    let fallback = `${prefix}:${slug}`;
     let counter = 2;
-    // Ensure node IDs remain unique even when captions collide.
-    while (usedIds.has(id)) {
-      id = `${prefix}:${slug}-${counter}`;
+    while (usedIds.has(fallback)) {
+      fallback = `${prefix}:${slug}-${counter}`;
       counter += 1;
     }
-    usedIds.add(id);
-    return id;
+    usedIds.add(fallback);
+    return fallback;
   }
 
   function registerName(map, type, key, id) {
@@ -1081,6 +1056,7 @@ function buildGraphJSON(meta) {
 
   function registerNode(node) {
     nodes.push(node);
+    rememberEntity(node.id, node.type, node.name, node.datasource);
     const key = normalizeName(node.rawName || node.name);
     registerName(nameToIds, node.type, key, node.id);
     lookupEntries.push({
@@ -1098,15 +1074,15 @@ function buildGraphJSON(meta) {
     state.nodeIndex.set(node.id, node);
   }
 
-  function addEdge(from, to, rel) {
-    if (!from || !to) return;
-    const edgeKey = `${from}->${to}:${rel}`;
+  function addEdge(source, target, rel) {
+    if (!source || !target) return;
+    const edgeKey = `${source}->${target}:${rel}`;
     if (edgeKeys.has(edgeKey)) return;
     edgeKeys.add(edgeKey);
     edges.push({
       id: edgeKey,
-      from,
-      to,
+      source,
+      target,
       rel,
       type: rel,
     });
@@ -1117,14 +1093,16 @@ function buildGraphJSON(meta) {
       const isCalc = Boolean(field.is_calculated);
       const type = isCalc ? 'CalculatedField' : 'Field';
       const baseName = field.name || `Field ${dsIndex + 1}.${index + 1}`;
-      const datasourceId = datasource.rawId;
+      const datasourceId = cleanInternalId(datasource.rawId) || datasource.rawId || datasource.id || datasource.name;
       const datasourceLabel = datasourceLabels.get(datasourceId) || datasource.name;
+      const internalId = canonicalId(field.rawId, isCalc ? 'calc' : 'field', baseName);
       const node = {
-        id: makeNodeId(isCalc ? 'calc' : 'field', baseName),
+        id: internalId,
         type,
         name: displayName(baseName),
         rawName: baseName,
-        rawId: field.rawId || baseName,
+        rawId: internalId,
+        originalId: field.rawId || '',
         datasource: datasourceLabel,
         datasourceId,
         datatype: field.datatype || '',
@@ -1153,12 +1131,14 @@ function buildGraphJSON(meta) {
 
   meta.parameters.forEach((parameter, index) => {
     const baseName = parameter.name || `Parameter ${index + 1}`;
+    const internalId = canonicalId(parameter.rawId, 'param', baseName);
     const node = {
-      id: makeNodeId('param', baseName),
+      id: internalId,
       type: 'Parameter',
       name: displayName(baseName),
       rawName: baseName,
-      rawId: parameter.rawId || baseName,
+      rawId: internalId,
+      originalId: parameter.rawId || '',
       datatype: parameter.datatype || '',
       currentValue: parameter.current_value || '',
       usedInCalcs: Array.from(paramUsage.get(normalizeName(baseName)) || []),
@@ -1168,12 +1148,14 @@ function buildGraphJSON(meta) {
 
   meta.worksheets.forEach((worksheet, index) => {
     const baseName = worksheet.name || `Worksheet ${index + 1}`;
+    const internalId = canonicalId(worksheet.rawId, 'ws', baseName);
     const node = {
-      id: makeNodeId('ws', baseName),
+      id: internalId,
       type: 'Worksheet',
       name: baseName,
       rawName: baseName,
-      rawId: worksheet.rawId || baseName,
+      rawId: internalId,
+      originalId: worksheet.rawId || '',
       fieldsUsed: worksheet.fields_used.slice(),
       dashboards: Array.from(worksheetDashboards.get(normalizeName(baseName)) || []),
     };
@@ -1182,12 +1164,14 @@ function buildGraphJSON(meta) {
 
   meta.dashboards.forEach((dashboard, index) => {
     const baseName = dashboard.name || `Dashboard ${index + 1}`;
+    const internalId = canonicalId(dashboard.rawId, 'db', baseName);
     const node = {
-      id: makeNodeId('db', baseName),
+      id: internalId,
       type: 'Dashboard',
       name: baseName,
       rawName: baseName,
-      rawId: dashboard.rawId || baseName,
+      rawId: internalId,
+      originalId: dashboard.rawId || '',
       worksheets: dashboard.worksheets.slice(),
     };
     registerNode(node);
@@ -1240,6 +1224,56 @@ function buildGraphJSON(meta) {
   state.lookupEntries = lookupEntries.sort((a, b) => a.label.localeCompare(b.label));
 
   return { nodes, edges };
+}
+
+/**
+ * Verifies graph node/edge integrity and ID invariants before rendering.
+ * @param {WorkbookGraph} graph
+ * @returns {WorkbookGraph}
+ */
+function validateGraph(graph) {
+  if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) {
+    throw new Error('Invalid graph payload: nodes/edges missing.');
+  }
+
+  const nodeIds = new Set();
+  graph.nodes.forEach((node, index) => {
+    if (!node || typeof node.id !== 'string' || !node.id.trim()) {
+      throw new Error(`Graph node at index ${index} is missing a stable id.`);
+    }
+    const id = node.id.trim();
+    if (nodeIds.has(id)) {
+      throw new Error(`Duplicate node id detected: ${id}`);
+    }
+    nodeIds.add(id);
+    if (node.rawId && node.rawId !== id) {
+      console.warn('[Graph] rawId mismatch, normalizing to id', id, node.rawId);
+      node.rawId = id;
+    }
+    if (typeof node.name !== 'string' || !node.name.trim()) {
+      console.warn('[Graph] Node missing friendly name for id', id);
+      node.name = node.name || id;
+    }
+  });
+
+  const edgeIds = new Set();
+  graph.edges.forEach((edge, index) => {
+    if (!edge || typeof edge.id !== 'string' || !edge.id.trim()) {
+      throw new Error(`Graph edge at index ${index} is missing an id.`);
+    }
+    if (edgeIds.has(edge.id)) {
+      throw new Error(`Duplicate edge id detected: ${edge.id}`);
+    }
+    edgeIds.add(edge.id);
+    if (!edge.source || !edge.target) {
+      throw new Error(`Edge ${edge.id} missing source/target.`);
+    }
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
+      throw new Error(`Edge ${edge.id} references missing node(s): ${edge.source} -> ${edge.target}`);
+    }
+  });
+
+  return graph;
 }
 
 /**
@@ -1346,12 +1380,12 @@ function drawGraph(graph) {
   });
 
   edges.forEach((edge) => {
-    if (!edge || !edge.id || !edge.from || !edge.to) return;
-    if (!nodeIdSet.has(edge.from) || !nodeIdSet.has(edge.to)) {
+    if (!edge || !edge.id || !edge.source || !edge.target) return;
+    if (!nodeIdSet.has(edge.source) || !nodeIdSet.has(edge.target)) {
       console.warn('Edge references missing node', edge);
       return;
     }
-    edgeEles.push({ data: { id: edge.id, source: edge.from, target: edge.to, rel: edge.rel || edge.type } });
+    edgeEles.push({ data: { id: edge.id, source: edge.source, target: edge.target, rel: edge.rel || edge.type } });
   });
 
   if (edgeEles.length === 0) {

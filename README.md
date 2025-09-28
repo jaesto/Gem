@@ -106,8 +106,8 @@ browser.
 
 The runtime flows from parsing to rendering:
 
-1. Parse the uploaded workbook XML (`parseWorkbookXML`).
-2. Build a normalized node/edge model (`buildGraphJSON`).
+1. Parse the uploaded workbook (`parseWorkbookFile` → `parseFromXmlDocument`).
+2. Build a normalized node/edge model (`buildGraph`).
 3. Initialize Cytoscape once (`bootGraph`), then redraw via `drawGraph`.
 4. React to UI actions (`bindUI`): filters, layouts, hops, isolation, theme.
 5. Export serializers (`buildMarkdown`, `buildDot`, and JSON builders) format downloads on demand.
@@ -125,7 +125,7 @@ Data types:
 
 - **Node**: `{ id, name, type }` with `type` values `Field`, `CalculatedField`, `Worksheet`,
   `Dashboard`, `Parameter` plus additional metadata (datasource, formulas, usage).
-- **Edge**: `{ id, source, target, label }` using relationship names such as `FEEDS`, `PARAM_OF`,
+- **Edge**: `{ id, source, target, rel }` using relationship names such as `FEEDS`, `PARAM_OF`,
   `USED_IN`, and `ON` to describe lineage.
 - **Workbook graph**: `{ nodes: Node[], edges: Edge[] }` consumed by Cytoscape.
 
@@ -143,6 +143,10 @@ Data types:
 
 - `.twbx` files fail to open: Check the browser console for parsing errors and confirm the file
   isn’t blocked by the browser’s size limits.
+- Graph uploads but nothing renders: Open the console for validation errors. Gem enforces Tableau
+  internal IDs (`Calculation_…`, `Field_…`, `Worksheet_…`) as node IDs and rejects edges that point to
+  missing nodes. If you edit XML manually, keep those IDs intact—only the friendly captions should
+  change.
 - Brand logo missing on GitHub Pages: Use the hosted path `/Gem/assets/gem-logo.png` or the relative
   `./assets/gem-logo.png` when serving from a custom domain.
 
