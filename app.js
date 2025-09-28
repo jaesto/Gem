@@ -22,6 +22,9 @@ const state = {
   lookupEntries: [],
   lookupMap: new Map(),
   nameToId: new Map(),
+  idToName: new Map(),
+  idToType: new Map(),
+  idToDatasource: new Map(),
   isolatedMode: 'unhide',
   activeLayout: null,
   filters: {
@@ -721,26 +724,46 @@ function parseWorkbookXML(xmlText) {
 
   const datasourceNodes = Array.from(xml.querySelectorAll('datasource'));
   datasourceNodes.forEach((datasourceNode, index) => {
-    const name = getAttr(datasourceNode, 'name') || getAttr(datasourceNode, 'caption') || `Datasource ${index + 1}`;
+    const rawId = getAttr(datasourceNode, 'name') || '';
+    const caption = getAttr(datasourceNode, 'caption') || '';
+    const friendlyName = caption || rawId || `Datasource ${index + 1}`;
     const datasource = {
-      name,
+      id: rawId || friendlyName,
+      rawId: rawId || friendlyName,
+      caption,
+      name: friendlyName,
       fields: [],
+      connections: Array.from(datasourceNode.querySelectorAll('connection')).map((connNode) => ({
+        id: getAttr(connNode, 'name') || '',
+        caption: getAttr(connNode, 'caption') || '',
+        class: getAttr(connNode, 'class') || '',
+        type: getAttr(connNode, 'type') || '',
+        server: getAttr(connNode, 'server') || '',
+        dbname: getAttr(connNode, 'dbname') || '',
+        warehouse: getAttr(connNode, 'warehouse') || '',
+      })),
     };
 
     // Tableau columns describe both base fields and calculated fields in each datasource.
     const columnNodes = Array.from(datasourceNode.querySelectorAll('column'));
     columnNodes.forEach((columnNode, columnIndex) => {
-      const fieldName = getAttr(columnNode, 'caption') || getAttr(columnNode, 'name') || `Field ${columnIndex + 1}`;
+      const fieldId = getAttr(columnNode, 'name') || '';
+      const fieldCaption = getAttr(columnNode, 'caption') || '';
+      const fieldName = fieldCaption || fieldId || `Field ${columnIndex + 1}`;
       const datatype = getAttr(columnNode, 'datatype') || getAttr(columnNode, 'role') || '';
       const defaultAggregation = getAttr(columnNode, 'default-aggregation') || getAttr(columnNode, 'aggregation') || '';
       const role = getAttr(columnNode, 'role') || '';
       const calculationNode = columnNode.querySelector('calculation');
       const field = {
+        id: fieldId || fieldName,
+        rawId: fieldId || fieldName,
+        caption: fieldCaption,
         name: fieldName,
         datatype,
         default_aggregation: defaultAggregation,
         role,
         is_calculated: Boolean(calculationNode),
+        datasource_id: datasource.rawId,
       };
       if (calculationNode) {
         const formula = getAttr(calculationNode, 'formula') || calculationNode.textContent || '';
@@ -760,11 +783,16 @@ function parseWorkbookXML(xmlText) {
 
   const parameterNodes = Array.from(xml.querySelectorAll('parameter'));
   parameterNodes.forEach((parameterNode, index) => {
-    const name = getAttr(parameterNode, 'name') || getAttr(parameterNode, 'caption') || `Parameter ${index + 1}`;
+    const rawId = getAttr(parameterNode, 'name') || '';
+    const caption = getAttr(parameterNode, 'caption') || '';
+    const name = caption || rawId || `Parameter ${index + 1}`;
     const datatype = getAttr(parameterNode, 'datatype') || '';
     const currentValueNode = parameterNode.querySelector('current-value');
     const currentValue = getAttr(parameterNode, 'value') || (currentValueNode ? currentValueNode.textContent : '') || '';
     meta.parameters.push({
+      id: rawId || name,
+      rawId: rawId || name,
+      caption,
       name,
       datatype,
       current_value: currentValue,
@@ -773,7 +801,9 @@ function parseWorkbookXML(xmlText) {
 
   const worksheetNodes = Array.from(xml.querySelectorAll('worksheets > worksheet'));
   worksheetNodes.forEach((worksheetNode, index) => {
-    const name = getAttr(worksheetNode, 'name') || `Worksheet ${index + 1}`;
+    const rawId = getAttr(worksheetNode, 'name') || '';
+    const caption = getAttr(worksheetNode, 'caption') || '';
+    const name = caption || rawId || `Worksheet ${index + 1}`;
     const fieldsUsed = new Set();
     Array.from(worksheetNode.querySelectorAll('datasource-dependencies column')).forEach((columnNode) => {
       const ref = getAttr(columnNode, 'caption') || getAttr(columnNode, 'name');
@@ -788,6 +818,9 @@ function parseWorkbookXML(xmlText) {
       }
     });
     const worksheet = {
+      id: rawId || name,
+      rawId: rawId || name,
+      caption,
       name,
       fields_used: Array.from(fieldsUsed),
     };
@@ -796,7 +829,9 @@ function parseWorkbookXML(xmlText) {
 
   const dashboardNodes = Array.from(xml.querySelectorAll('dashboards > dashboard'));
   dashboardNodes.forEach((dashboardNode, index) => {
-    const name = getAttr(dashboardNode, 'name') || `Dashboard ${index + 1}`;
+    const rawId = getAttr(dashboardNode, 'name') || '';
+    const caption = getAttr(dashboardNode, 'caption') || '';
+    const name = caption || rawId || `Dashboard ${index + 1}`;
     const worksheetRefs = new Set();
     Array.from(dashboardNode.querySelectorAll('worksheet')).forEach((worksheetRefNode) => {
       const ref = getAttr(worksheetRefNode, 'name') || getAttr(worksheetRefNode, 'sheet');
@@ -811,6 +846,9 @@ function parseWorkbookXML(xmlText) {
       }
     });
     meta.dashboards.push({
+      id: rawId || name,
+      rawId: rawId || name,
+      caption,
       name,
       worksheets: Array.from(worksheetRefs),
     });
@@ -903,6 +941,15 @@ function buildGraphJSON(meta) {
   state.lookupEntries = [];
   state.lookupMap = new Map();
   state.nameToId = new Map();
+  const idToName = new Map();
+  const idToType = new Map();
+  const idToDatasource = new Map();
+  // These lookup maps translate Tableau-internal identifiers (e.g., Calculation_123)
+  // into human-readable names, type labels, and datasource captions so the UI can
+  // favor friendly labels while still exposing raw IDs via tooltips for debugging.
+  state.idToName = idToName;
+  state.idToType = idToType;
+  state.idToDatasource = idToDatasource;
 
   // Collections that ultimately drive Cytoscape and the search/autocomplete UI.
   const nodes = [];
@@ -910,6 +957,7 @@ function buildGraphJSON(meta) {
   const edgeKeys = new Set();
   const lookupEntries = [];
   const usedIds = new Set();
+  const datasourceLabels = new Map();
 
   // Tableau objects can share captions; track them by normalized name for fuzzy matching.
   const nameToIds = {
@@ -925,6 +973,57 @@ function buildGraphJSON(meta) {
   const fieldFeeds = new Map();
   const paramUsage = new Map();
   const worksheetDashboards = new Map();
+
+  function rememberEntity(rawId, type, label, datasourceLabel) {
+    if (!rawId) return;
+    const safeLabel = label || 'Unnamed';
+    const variants = new Set([rawId]);
+    const trimmed = rawId.trim();
+    if (trimmed) variants.add(trimmed);
+    const unbracketed = trimmed.replace(NAME_NORMALIZER, '').trim();
+    if (unbracketed) {
+      variants.add(unbracketed);
+      variants.add(`[${unbracketed}]`);
+    }
+    variants.forEach((variant) => {
+      if (!idToName.has(variant) || idToName.get(variant) === 'Unnamed') {
+        idToName.set(variant, safeLabel);
+      }
+      if (type && !idToType.has(variant)) {
+        idToType.set(variant, type);
+      }
+      if (datasourceLabel && !idToDatasource.has(variant)) {
+        idToDatasource.set(variant, datasourceLabel);
+      }
+    });
+  }
+
+  meta.datasources.forEach((datasource) => {
+    const dsId = datasource.rawId || datasource.id || datasource.name;
+    const dsLabel = friendlyDatasourceName(datasource);
+    if (dsId) {
+      datasourceLabels.set(dsId, dsLabel);
+      rememberEntity(dsId, 'Datasource', dsLabel, dsLabel);
+    }
+    datasource.fields.forEach((field) => {
+      const rawFieldId = field.rawId || field.id || field.name;
+      const fieldLabel = displayName(field.name) || field.name || 'Unnamed';
+      const fieldType = field.is_calculated ? 'CalculatedField' : 'Field';
+      rememberEntity(rawFieldId, fieldType, fieldLabel, dsLabel);
+    });
+  });
+
+  meta.parameters.forEach((parameter) => {
+    rememberEntity(parameter.rawId || parameter.id || parameter.name, 'Parameter', parameter.name);
+  });
+
+  meta.worksheets.forEach((worksheet) => {
+    rememberEntity(worksheet.rawId || worksheet.id || worksheet.name, 'Worksheet', worksheet.name);
+  });
+
+  meta.dashboards.forEach((dashboard) => {
+    rememberEntity(dashboard.rawId || dashboard.id || dashboard.name, 'Dashboard', dashboard.name);
+  });
 
   meta.worksheets.forEach((worksheet) => {
     worksheet.fields_used.forEach((item) => {
@@ -1018,12 +1117,16 @@ function buildGraphJSON(meta) {
       const isCalc = Boolean(field.is_calculated);
       const type = isCalc ? 'CalculatedField' : 'Field';
       const baseName = field.name || `Field ${dsIndex + 1}.${index + 1}`;
+      const datasourceId = datasource.rawId;
+      const datasourceLabel = datasourceLabels.get(datasourceId) || datasource.name;
       const node = {
         id: makeNodeId(isCalc ? 'calc' : 'field', baseName),
         type,
         name: displayName(baseName),
         rawName: baseName,
-        datasource: datasource.name,
+        rawId: field.rawId || baseName,
+        datasource: datasourceLabel,
+        datasourceId,
         datatype: field.datatype || '',
         role: field.role || '',
         defaultAggregation: field.default_aggregation || '',
@@ -1055,6 +1158,7 @@ function buildGraphJSON(meta) {
       type: 'Parameter',
       name: displayName(baseName),
       rawName: baseName,
+      rawId: parameter.rawId || baseName,
       datatype: parameter.datatype || '',
       currentValue: parameter.current_value || '',
       usedInCalcs: Array.from(paramUsage.get(normalizeName(baseName)) || []),
@@ -1069,6 +1173,7 @@ function buildGraphJSON(meta) {
       type: 'Worksheet',
       name: baseName,
       rawName: baseName,
+      rawId: worksheet.rawId || baseName,
       fieldsUsed: worksheet.fields_used.slice(),
       dashboards: Array.from(worksheetDashboards.get(normalizeName(baseName)) || []),
     };
@@ -1082,6 +1187,7 @@ function buildGraphJSON(meta) {
       type: 'Dashboard',
       name: baseName,
       rawName: baseName,
+      rawId: dashboard.rawId || baseName,
       worksheets: dashboard.worksheets.slice(),
     };
     registerNode(node);
@@ -1156,6 +1262,39 @@ function normalizeName(name) {
  */
 function displayName(name) {
   return (name || '').replace(NAME_NORMALIZER, '').trim() || name;
+}
+
+/**
+ * Produces a human-friendly datasource label using connection hints when present.
+ * @param {{name?:string, caption?:string, connections?:Array<object>}} datasource
+ * @returns {string}
+ */
+function friendlyDatasourceName(datasource) {
+  if (!datasource) return 'Unnamed datasource';
+  const base = datasource.name || datasource.caption || 'Unnamed datasource';
+  const hints = new Set();
+  (datasource.connections || []).forEach((conn) => {
+    const candidates = [conn.caption, conn.class, conn.type, conn.warehouse, conn.dbname];
+    candidates.forEach((candidate) => {
+      const hint = formatDatasourceHint(candidate);
+      if (hint) hints.add(hint);
+    });
+  });
+  if (hints.size) {
+    return `${base} (${Array.from(hints).join(', ')})`;
+  }
+  if (/federated/i.test(base)) {
+    return 'Federated source';
+  }
+  return base;
+}
+
+function formatDatasourceHint(value) {
+  const text = (value || '').trim();
+  if (!text) return '';
+  return text
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
 /**
@@ -1786,9 +1925,13 @@ function renderDetails(nodeData) {
   }
 
   const lines = [];
-  lines.push(`<h2>${escapeHtml(nodeData.name)}</h2>`);
+  const headingTitle = nodeData.rawId ? ` title="${escapeHtml(nodeData.rawId)}"` : '';
+  lines.push(`<h2${headingTitle}>${escapeHtml(nodeData.name)}</h2>`);
   const infoBits = [escapeHtml(nodeData.type)];
-  if (nodeData.datasource) infoBits.push(`Datasource: ${escapeHtml(nodeData.datasource)}`);
+  if (nodeData.datasource) {
+    const dsTitle = nodeData.datasourceId ? ` title="${escapeHtml(nodeData.datasourceId)}"` : '';
+    infoBits.push(`Datasource: <span${dsTitle}>${escapeHtml(nodeData.datasource)}</span>`);
+  }
   if (nodeData.datatype) infoBits.push(`Type: ${escapeHtml(nodeData.datatype)}`);
   lines.push(`<p class="detail-type">${infoBits.join(' • ')}</p>`);
 
@@ -1820,16 +1963,16 @@ function renderDetails(nodeData) {
       lines.push(`<p><strong>Flags:</strong> ${flags.join(' • ')}</p>`);
     }
     if (nodeData.references?.fields?.length) {
-      lines.push(renderList('Referenced fields', nodeData.references.fields.map(displayName)));
+      lines.push(renderEntityChipList('Referenced fields', nodeData.references.fields));
     }
     if (nodeData.references?.parameters?.length) {
-      lines.push(renderList('Referenced parameters', nodeData.references.parameters));
+      lines.push(renderEntityChipList('Referenced parameters', nodeData.references.parameters));
     }
     if (nodeData.usedInWorksheets?.length) {
-      lines.push(renderList('Worksheets', nodeData.usedInWorksheets));
+      lines.push(renderList('Worksheets', nodeData.usedInWorksheets.map((name) => resolveEntity(name).name)));
     }
     if (nodeData.dashboards?.length) {
-      lines.push(renderList('Dashboards', nodeData.dashboards));
+      lines.push(renderList('Dashboards', nodeData.dashboards.map((name) => resolveEntity(name).name)));
     }
   } else if (nodeData.type === 'Field') {
     if (nodeData.role) {
@@ -1839,24 +1982,24 @@ function renderDetails(nodeData) {
       lines.push(`<p><strong>Default aggregation:</strong> ${escapeHtml(nodeData.defaultAggregation)}</p>`);
     }
     if (nodeData.referencedByCalcs?.length) {
-      lines.push(renderList('Used by calculations', nodeData.referencedByCalcs.map(displayName)));
+      lines.push(renderList('Used by calculations', nodeData.referencedByCalcs.map((name) => resolveEntity(name).name)));
     }
     if (nodeData.usedInWorksheets?.length) {
-      lines.push(renderList('Worksheets', nodeData.usedInWorksheets));
+      lines.push(renderList('Worksheets', nodeData.usedInWorksheets.map((name) => resolveEntity(name).name)));
     }
     if (nodeData.dashboards?.length) {
-      lines.push(renderList('Dashboards', nodeData.dashboards));
+      lines.push(renderList('Dashboards', nodeData.dashboards.map((name) => resolveEntity(name).name)));
     }
   } else if (nodeData.type === 'Worksheet') {
     if (nodeData.fieldsUsed?.length) {
-      lines.push(renderList('Fields & calcs', nodeData.fieldsUsed.map(displayName)));
+      lines.push(renderList('Fields & calcs', nodeData.fieldsUsed.map((name) => resolveEntity(name).name)));
     }
     if (nodeData.dashboards?.length) {
-      lines.push(renderList('Dashboards', nodeData.dashboards));
+      lines.push(renderList('Dashboards', nodeData.dashboards.map((name) => resolveEntity(name).name)));
     }
   } else if (nodeData.type === 'Dashboard') {
     if (nodeData.worksheets?.length) {
-      lines.push(renderList('Worksheets', nodeData.worksheets));
+      lines.push(renderList('Worksheets', nodeData.worksheets.map((name) => resolveEntity(name).name)));
     }
   } else if (nodeData.type === 'Parameter') {
     if (nodeData.datatype) {
@@ -1866,7 +2009,7 @@ function renderDetails(nodeData) {
       lines.push(`<p><strong>Current value:</strong> ${escapeHtml(nodeData.currentValue)}</p>`);
     }
     if (nodeData.usedInCalcs?.length) {
-      lines.push(renderList('Used in calculations', nodeData.usedInCalcs.map(displayName)));
+      lines.push(renderList('Used in calculations', nodeData.usedInCalcs.map((name) => resolveEntity(name).name)));
     }
   }
 
@@ -1907,6 +2050,59 @@ function renderList(title, items) {
   if (!items || !items.length) return '';
   const li = items.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
   return `<h3>${escapeHtml(title)}</h3><ul>${li}</ul>`;
+}
+
+function renderEntityChipList(title, rawIds) {
+  if (!rawIds || !rawIds.length) return '';
+  const li = rawIds
+    .map((rawId) => {
+      const entity = resolveEntity(rawId);
+      const type = entity.type ? escapeHtml(entity.type) : 'Unknown';
+      const label = escapeHtml(entity.name || displayName(rawId));
+      const tooltip = escapeHtml(entity.original || rawId);
+      return `<li title="${tooltip}"><span class="type-chip">${type}</span> ${label}</li>`;
+    })
+    .join('');
+  return `<h3>${escapeHtml(title)}</h3><ul>${li}</ul>`;
+}
+
+function resolveEntity(rawValue) {
+  const original = rawValue || '';
+  const trimmed = original.trim();
+  const unbracketed = trimmed.replace(NAME_NORMALIZER, '').trim();
+  const candidates = [original, trimmed, unbracketed];
+  let name = '';
+  let type = '';
+  let datasource = '';
+  candidates.forEach((candidate) => {
+    if (!candidate) return;
+    if (!name && state.idToName.has(candidate)) {
+      name = state.idToName.get(candidate) || name;
+    }
+    if (!type && state.idToType.has(candidate)) {
+      type = state.idToType.get(candidate) || type;
+    }
+    if (!datasource && state.idToDatasource.has(candidate)) {
+      datasource = state.idToDatasource.get(candidate) || datasource;
+    }
+  });
+  if (!name) {
+    const fallback = displayName(unbracketed || trimmed || original);
+    name = fallback || 'Unnamed';
+  }
+  if (!type || !datasource) {
+    const nodeId = state.lookupMap.get(name) || state.nameToId.get(normalizeName(name));
+    if (nodeId) {
+      const node = state.nodeIndex.get(nodeId);
+      if (node) {
+        if (!type) type = node.type;
+        if (!datasource) datasource = node.datasource || datasource;
+        if (!name) name = node.name;
+      }
+    }
+  }
+  if (!type) type = 'Unknown';
+  return { name, type, datasource, original: trimmed || original, canonical: unbracketed };
 }
 
 /**
