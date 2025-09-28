@@ -112,6 +112,7 @@
       <!-- Sidebar with drop zone and workbook navigation tabs -->
       <aside class="sidebar">
         <section id="dropZone" class="dropzone" aria-label="Workbook drop zone" tabindex="0">
+          <!-- Loader wiring expects this stable ID (see ID invariants in app.js). -->
           <input id="fileInput" type="file" accept=".twb,.twbx" hidden />
           <p>Drop a Tableau .twb or .twbx file here<br />or click Open Workbook.</p>
         </section>
