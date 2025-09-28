@@ -146,6 +146,15 @@ Data types:
 - Brand logo missing on GitHub Pages: Use the hosted path `/Gem/assets/gem-logo.png` or the relative
   `./assets/gem-logo.png` when serving from a custom domain.
 
-## 10. License
+## 10. Name resolution
+
+Gem builds lookup tables after parsing a workbook that map Tableau's internal identifiers (for
+fields, calculations, parameters, sheets, dashboards, and datasources) to the friendly captions that
+appear in the UI. The Cytoscape nodes and sidebar use those human-readable names, while the original
+IDs remain available as tooltips on the details heading, datasource line, and reference lists. Hover
+those elements any time you need to verify the underlying Tableau identifier while keeping the
+visualization approachable.
+
+## 11. License
 
 This project uses the MIT License. Cytoscape.js and JSZip remain MIT licensed (see `LICENSE.md`).
