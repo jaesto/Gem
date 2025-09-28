@@ -35,10 +35,10 @@ Supported files: Tableau `.twb` (XML) and `.twbx` (packaged) workbooks.
   - **Layout menu** (`layoutDropdown` / `layoutMenu` / `layoutMenuBtn`):
     - **Force**: physics simulation for organic positioning after big updates.
     - **Grid**: tidy rows/columns for scanning long lists of nodes.
-    - **Hierarchy**: breadth-first layout that highlights dashboard-to-worksheet depth.
+    - **Hierarchy**: breadth-first layout that arranges dashboards up top, then sheets, then their dependencies.
     - **Centered hierarchy**: concentric rings by type for overview diagrams.
     - **Centered from selection**: centers on the active node to study its neighborhood.
-- **Hops**: Choose 1–5 hops from `hopSelect` to expand neighbors around the selection.
+- **Hops ▾** (`hopBtn` / `hopMenu`): Choose 1–5 hops from the pill dropdown to expand neighbors around the selection.
 - **Isolated nodes** (`isolatedBtn` / `isolatedMenu`):
   - **Hide** removes detached nodes from view.
   - **Cluster** packs isolated nodes into a compact grid for review.
@@ -48,6 +48,20 @@ Supported files: Tableau `.twb` (XML) and `.twbx` (packaged) workbooks.
   Parameters) plus **LOD only** and **Table Calcs only** views for calculated fields.
 - **Theme** (`themeBtn`): Switch between Dark and Light themes for the current session.
 - **Drag/Zoom**: Pan with the mouse, scroll to zoom, and drag nodes to adjust their placement.
+
+### Hop selector
+
+- The hop control is now a pill-style dropdown labeled **Hops ▾**, consistent with the rest of the toolbar pills.
+- Selecting 1–5 hops sets the neighbor expansion depth that Gem uses when you expand around the current selection.
+
+### Hierarchy layout (pyramid)
+
+- The **Hierarchy** layout arranges nodes from top to bottom:
+  - **Level 0:** Dashboards (roots)
+  - **Level 1:** Worksheets
+  - **Level 2+:** Fields, Calculated Fields, Parameters
+- Ranks are separated vertically so the lineage reads as a pyramid instead of a long horizontal snake.
+- If no dashboards are visible (for example after filtering), Gem automatically uses worksheets as the roots.
 
 ### Details panel
 
@@ -81,7 +95,7 @@ browser.
 | Fit | `fitBtn` | Fits visible graph elements. | Press `f` while focus is outside inputs. |
 | Auto layout | `layoutBtn` | Replays the force layout. | Helpful after filters or hop changes. |
 | Layout menu | `layoutDropdown`[^layout-ids] | Preset layouts[^layout-menu]. | Runs immediately. |
-| Hop selector | `hopSelect` | Sets neighbor hop count. | Values 1–5; mirrors last expansion. |
+| Hop selector | `hopBtn` / `hopMenu` | Sets neighbor hop count. | Values 1–5; mirrors last expansion. |
 | Isolated nodes | `isolatedBtn`[^isolated-ids] | Modes[^isolated-note]. | Menu toggles. |
 | Filters | `filters-dropdown` | Filters[^filters-note]. | Combine toggles to narrow the graph. |
 | Export | `export-dropdown` | Download workbook exports[^export-note]. | Browser download flow. |

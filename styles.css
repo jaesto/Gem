@@ -346,30 +346,29 @@ summary::-webkit-details-marker {
   box-shadow: var(--gem-glow);
 }
 
-#hopSelect {
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  padding: 6px 24px 6px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--gem-border);
-  background: var(--gem-surface);
-  color: var(--gem-text);
-  font-size: 13px;
-  cursor: pointer;
-  min-width: 124px;
-  line-height: 1.2;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='none' stroke='%23A78BFA' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  background-size: 12px;
-  transition: border var(--trans), box-shadow var(--trans), background var(--trans);
+#hopDropdown {
+  min-width: 0;
 }
 
-#hopSelect:focus {
-  outline: none;
+#hopDropdown .btn {
+  min-width: 124px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+#hopDropdown .btn:focus-visible {
   box-shadow: var(--gem-glow);
-  border-color: rgba(139, 92, 246, 0.45);
+  outline: none;
+}
+
+#hopDropdown .menu {
+  min-width: 140px;
+}
+
+.dropdown .menu.open {
+  display: block;
 }
 
 /* -------------------------------------------------------------------------- */
