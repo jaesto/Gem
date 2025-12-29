@@ -77,12 +77,14 @@ function setHopUI(hops) {
   const btn = document.getElementById('hopBtn');
   const menu = document.getElementById('hopMenu');
   const normalized = clampHop(hops);
+
   if (btn) {
     btn.textContent = `${normalized} hop${normalized > 1 ? 's' : ''} ▾`;
     btn.dataset.hop = String(normalized);
     btn.setAttribute('aria-label', `Expand neighbors ${normalized} hop${normalized > 1 ? 's' : ''}`);
     btn.setAttribute('title', `Expand neighbors this many hops (Current: ${normalized})`);
   }
+
   if (menu) {
     menu.querySelectorAll('[data-hop]').forEach((item) => {
       const hopValue = clampHop(item.dataset.hop);
@@ -596,11 +598,15 @@ function bootGraph() {
   try {
     const graphContainerEl = document.getElementById('graph');
     if (!graphContainerEl) {
-      throw new Error('Graph container element #graph not found in DOM');
+      throw new Error(
+        'Application initialization failed: Graph container missing. Please refresh the page. If the problem persists, check your browser console for details.'
+      );
     }
 
     if (typeof cytoscape !== 'function') {
-      throw new Error('Cytoscape library not loaded');
+      throw new Error(
+        'Graph visualization library failed to load. Please check your internet connection and refresh the page. If using offline mode, ensure all library files are present in the /lib folder.'
+      );
     }
 
   state.cy = cytoscape({
@@ -800,11 +806,15 @@ async function handleFiles(fileList) {
  */
 async function parseWorkbookFile(filename, arrayBuffer) {
   if (!filename || typeof filename !== 'string') {
-    throw new Error('Invalid filename');
+    throw new Error(
+      'File upload failed: No filename provided. Please try selecting the file again.'
+    );
   }
 
   if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-    throw new Error('Invalid or empty file buffer');
+    throw new Error(
+      'File upload failed: The file appears to be empty or could not be read. Please check that the file is not corrupted and try again.'
+    );
   }
 
   const lower = filename.toLowerCase();
@@ -814,7 +824,7 @@ async function parseWorkbookFile(filename, arrayBuffer) {
   // Provide helpful error message for unsupported types
   const extension = filename.split('.').pop() || 'unknown';
   throw new Error(
-    `Unsupported file type: .${extension}. Please upload a Tableau workbook (.twb or .twbx file).`
+    `Unsupported file type: "${extension}"\n\nPlease upload a Tableau workbook file:\n• .twb (Tableau Workbook)\n• .twbx (Packaged Tableau Workbook)\n\nCurrent file: ${filename}`
   );
 }
 
@@ -826,20 +836,29 @@ async function parseTwbx(buf) {
     }
 
     const zip = await JSZip.loadAsync(buf).catch((err) => {
-      throw new Error(`Failed to unzip .twbx file: ${err.message || err}`);
+      throw new Error(
+        `Cannot open .twbx file: The file may be corrupted or is not a valid ZIP archive.\n\nTechnical details: ${err.message || err}\n\nSuggestions:\n• Try re-downloading the file from Tableau\n• Check that the file isn't truncated\n• Verify it's a genuine .twbx file (not renamed)`
+      );
     });
 
     const entry = Object.values(zip.files).find((f) => f.name.toLowerCase().endsWith('.twb'));
     if (!entry) {
-      throw new Error('No .twb file found inside .twbx archive');
+      const fileList = Object.values(zip.files).map((f) => f.name).join(', ');
+      throw new Error(
+        `Invalid .twbx file: No Tableau workbook (.twb) found inside the archive.\n\nFiles found: ${fileList || 'none'}\n\nThis may not be a genuine Tableau packaged workbook.`
+      );
     }
 
     const xml = await entry.async('text').catch((err) => {
-      throw new Error(`Failed to extract .twb from archive: ${err.message || err}`);
+      throw new Error(
+        `Cannot read workbook from archive.\n\nTechnical details: ${err.message || err}\n\nThe .twbx file may be corrupted.`
+      );
     });
 
     if (!xml || xml.trim().length === 0) {
-      throw new Error('Extracted .twb file is empty');
+      throw new Error(
+        'The workbook file inside the .twbx archive is empty. This file may be corrupted or incomplete.'
+      );
     }
 
     return parseTwbText(xml);
@@ -880,17 +899,23 @@ function parseTwbText(xmlText) {
     const errorNode = doc.querySelector('parsererror');
     if (errorNode) {
       const message = errorNode.textContent?.trim() || 'Unable to parse workbook XML.';
-      throw new Error(`XML parsing failed: ${message}`);
+      throw new Error(
+        `This file contains invalid XML and cannot be read.\n\n${message}\n\nThe workbook file may be corrupted. Try re-saving it from Tableau Desktop.`
+      );
     }
 
     // Validate it's actually a Tableau workbook
     if (!doc.documentElement) {
-      throw new Error('XML document is missing root element');
+      throw new Error(
+        'The file is missing required XML structure. This may not be a valid Tableau workbook file.'
+      );
     }
 
     const rootTag = doc.documentElement.tagName.toLowerCase();
     if (rootTag !== 'workbook') {
-      throw new Error(`Invalid Tableau workbook: expected <workbook> root, found <${rootTag}>`);
+      throw new Error(
+        `Not a valid Tableau workbook: Expected <workbook> structure, found <${rootTag}> instead.\n\nPlease ensure you're uploading a .twb or .twbx file created by Tableau.`
+      );
     }
 
     return parseFromXmlDocument(doc);
@@ -1137,6 +1162,68 @@ function dedupePairs(pairs) {
     }
   });
   return result;
+}
+
+/**
+ * Detects cycles in the graph by performing depth-first search.
+ * Returns array of cycle paths if found, empty array if acyclic.
+ * @param {{nodes:Array, edges:Array}} graph
+ * @returns {Array<string[]>} Array of cycle paths
+ */
+function detectCycles(graph) {
+  if (!graph || !graph.nodes || !graph.edges) {
+    return [];
+  }
+
+  // Build adjacency list
+  const adjList = new Map();
+  graph.nodes.forEach((node) => {
+    if (node && node.id) {
+      adjList.set(node.id, []);
+    }
+  });
+
+  graph.edges.forEach((edge) => {
+    if (edge && edge.source && edge.target && adjList.has(edge.source)) {
+      adjList.get(edge.source).push(edge.target);
+    }
+  });
+
+  const visited = new Set();
+  const recStack = new Set();
+  const cycles = [];
+
+  function dfs(nodeId, path = []) {
+    visited.add(nodeId);
+    recStack.add(nodeId);
+    path.push(nodeId);
+
+    const neighbors = adjList.get(nodeId) || [];
+    for (const neighbor of neighbors) {
+      if (!visited.has(neighbor)) {
+        dfs(neighbor, [...path]);
+      } else if (recStack.has(neighbor)) {
+        // Found a cycle
+        const cycleStart = path.indexOf(neighbor);
+        if (cycleStart >= 0) {
+          const cycle = path.slice(cycleStart);
+          cycle.push(neighbor); // Complete the cycle
+          cycles.push(cycle);
+        }
+      }
+    }
+
+    recStack.delete(nodeId);
+  }
+
+  // Check all nodes for cycles
+  adjList.forEach((_, nodeId) => {
+    if (!visited.has(nodeId)) {
+      dfs(nodeId, []);
+    }
+  });
+
+  return cycles;
 }
 
 /**
@@ -1485,7 +1572,24 @@ function buildGraph(meta) {
   state.lookupEntries = lookupEntries.sort((a, b) => a.label.localeCompare(b.label));
 
   console.debug('[buildGraph] Created', nodes.length, 'nodes and', edges.length, 'edges');
-  return { nodes, edges };
+
+  // Detect cycles in the graph
+  const graph = { nodes, edges };
+  const cycles = detectCycles(graph);
+
+  if (cycles.length > 0) {
+    console.warn('[buildGraph] Detected', cycles.length, 'cycle(s) in graph:', cycles);
+    // Log cycles for debugging but don't fail - some Tableau workbooks may have intentional cycles
+    cycles.forEach((cycle, index) => {
+      const cycleNames = cycle.map((id) => {
+        const node = nodes.find((n) => n.id === id);
+        return node ? node.name : id;
+      });
+      console.warn(`  Cycle ${index + 1}:`, cycleNames.join(' → '));
+    });
+  }
+
+  return graph;
   } catch (err) {
     console.error('[buildGraph] Failed:', err);
     throw new Error(`Failed to build graph: ${err.message || err}`);
@@ -1720,12 +1824,16 @@ function slugify(text) {
  */
 function drawGraph(graph) {
   if (!state.cy) {
-    throw new Error('Cytoscape instance not initialized');
+    throw new Error(
+      'Graph visualization not ready. Please refresh the page and try again. If the problem persists, check the browser console for errors.'
+    );
   }
 
   try {
     if (!graph || typeof graph !== 'object') {
-      throw new Error('Invalid graph object provided to drawGraph');
+      throw new Error(
+        'Cannot display graph: Invalid graph data received. The workbook may have structural issues. Check the browser console for details.'
+      );
     }
   const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
   const edges = Array.isArray(graph?.edges) ? graph.edges : [];
@@ -1899,32 +2007,50 @@ function fitToElements(elements, padding = 80) {
  * Applies the default force-directed layout (Bilkent when available).
  */
 function runForceLayout() {
-  if (!state.cy) return;
-  const nm = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
-  state.cy
-    .layout({
-      name: nm,
-      fit: true,
-      animate: 'end',
-      padding: 80,
-      randomize: false,
-      ungrabifyWhileSimulating: false,
-    })
-    .run();
-  state.cy.nodes().unlock();
-  state.cy.nodes().grabify();
-  setLayoutButton('Force');
+  if (!state.cy) {
+    console.warn('[runForceLayout] Cytoscape not initialized');
+    return;
+  }
+
+  try {
+    const nm = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
+    state.cy
+      .layout({
+        name: nm,
+        fit: true,
+        animate: 'end',
+        padding: 80,
+        randomize: false,
+        ungrabifyWhileSimulating: false,
+      })
+      .run();
+    state.cy.nodes().unlock();
+    state.cy.nodes().grabify();
+    setLayoutButton('Force');
+  } catch (err) {
+    console.error('[runForceLayout] Layout failed:', err);
+    showError('Failed to apply force layout', err);
+  }
 }
 
 /**
  * Applies Cytoscape's grid layout for dense workbook maps.
  */
 function runGridLayout() {
-  if (!state.cy) return;
-  state.cy.layout({ name: 'grid', fit: true, avoidOverlap: true, condense: true, padding: 80 }).run();
-  state.cy.nodes().unlock();
-  state.cy.nodes().grabify();
-  setLayoutButton('Grid');
+  if (!state.cy) {
+    console.warn('[runGridLayout] Cytoscape not initialized');
+    return;
+  }
+
+  try {
+    state.cy.layout({ name: 'grid', fit: true, avoidOverlap: true, condense: true, padding: 80 }).run();
+    state.cy.nodes().unlock();
+    state.cy.nodes().grabify();
+    setLayoutButton('Grid');
+  } catch (err) {
+    console.error('[runGridLayout] Layout failed:', err);
+    showError('Failed to apply grid layout', err);
+  }
 }
 
 function getHierarchyRootsAndLevels(cy) {
@@ -2247,6 +2373,7 @@ function setIsolatedMode(mode) {
 
 /**
  * Returns the closed neighborhood around a Cytoscape node for a given hop depth.
+ * Includes cycle protection to prevent infinite loops.
  * @param {cy.NodeSingular} node
  * @param {number} [depth]
  * @returns {cy.Collection}
@@ -2255,10 +2382,36 @@ function getNeighborhood(node, depth = 1) {
   if (!node || typeof node.closedNeighborhood !== 'function') {
     return node;
   }
-  let hood = node.closedNeighborhood();
-  for (let i = 1; i < depth; i += 1) {
-    hood = hood.union(hood.closedNeighborhood());
+
+  // Limit depth to prevent performance issues from cycles
+  const safeDepth = Math.min(Math.max(1, depth), 10);
+  if (safeDepth !== depth) {
+    console.warn('[getNeighborhood] Depth clamped to', safeDepth, 'from', depth);
   }
+
+  let hood = node.closedNeighborhood();
+  let prevSize = hood.length;
+  const MAX_ITERATIONS = 100; // Prevent infinite loops
+  let iterations = 0;
+
+  for (let i = 1; i < safeDepth; i += 1) {
+    iterations++;
+    if (iterations > MAX_ITERATIONS) {
+      console.warn('[getNeighborhood] Max iterations reached, stopping expansion');
+      break;
+    }
+
+    const newHood = hood.union(hood.closedNeighborhood());
+
+    // If neighborhood didn't grow, we've reached the graph boundary
+    if (newHood.length === prevSize) {
+      break;
+    }
+
+    hood = newHood;
+    prevSize = hood.length;
+  }
+
   return hood;
 }
 
@@ -2268,33 +2421,50 @@ function getNeighborhood(node, depth = 1) {
  * @param {{depth?:number, center?:boolean, fitPadding?:number, skipRelayout?:boolean}} [options]
  */
 function focusOnNode(id, options = {}) {
-  if (!state.cy) return;
-  const node = state.cy.getElementById(id);
-  if (!node || !node.length) return;
-
-  const depth = options.depth || 1;
-  const neighborhood = getNeighborhood(node, depth);
-
-  state.cy.batch(() => {
-    state.cy.$('node').unselect();
-    node.select();
-    state.cy.elements().addClass('faded');
-    neighborhood.removeClass('faded');
-  });
-
-  state.selectedNodeId = id;
-  state.lastFocusDepth = depth;
-  syncHopControl(depth);
-
-  if (options.center !== false) {
-    fitToElements(neighborhood, options.fitPadding ?? 120);
+  if (!state.cy) {
+    console.warn('[focusOnNode] Cytoscape not initialized');
+    return;
   }
 
-  renderDetails(node.data());
-  syncListSelection(id);
+  if (!id || typeof id !== 'string') {
+    console.warn('[focusOnNode] Invalid node ID:', id);
+    return;
+  }
 
-  if (!options.skipRelayout) {
-    setIsolatedMode(state.isolatedMode || 'unhide');
+  const node = state.cy.getElementById(id);
+  if (!node || !node.length) {
+    console.warn('[focusOnNode] Node not found:', id);
+    return;
+  }
+
+  try {
+    const depth = options.depth || 1;
+    const neighborhood = getNeighborhood(node, depth);
+
+    state.cy.batch(() => {
+      state.cy.$('node').unselect();
+      node.select();
+      state.cy.elements().addClass('faded');
+      neighborhood.removeClass('faded');
+    });
+
+    state.selectedNodeId = id;
+    state.lastFocusDepth = depth;
+    syncHopControl(depth);
+
+    if (options.center !== false) {
+      fitToElements(neighborhood, options.fitPadding ?? 120);
+    }
+
+    renderDetails(node.data());
+    syncListSelection(id);
+
+    if (!options.skipRelayout) {
+      setIsolatedMode(state.isolatedMode || 'unhide');
+    }
+  } catch (err) {
+    console.error('[focusOnNode] Failed to focus node:', err);
+    showError('Failed to focus on node', err);
   }
 }
 
@@ -2303,19 +2473,31 @@ function focusOnNode(id, options = {}) {
  * @param {string} query
  */
 function jumpToNode(query) {
-  if (!state.cy) return;
+  if (!state.cy) {
+    console.warn('[jumpToNode] Cytoscape not initialized');
+    return;
+  }
+
+  if (!query || typeof query !== 'string') {
+    console.warn('[jumpToNode] Invalid query:', query);
+    return;
+  }
+
   const normalized = normalizeName(query);
   let matchId = state.nameToId.get(normalized);
+
   if (!matchId) {
-    const entry = state.lookupEntries.find((item) => item.label.toLowerCase().includes(normalized));
-    if (entry) {
+    const entry = state.lookupEntries.find((item) => item && item.label && item.label.toLowerCase().includes(normalized));
+    if (entry && entry.id) {
       matchId = entry.id;
     }
   }
+
   if (!matchId) {
     setStatus(`No node matching "${query}".`);
     return;
   }
+
   focusOnNode(matchId, { depth: 1, center: true });
 }
 
@@ -2331,7 +2513,23 @@ function populateLists(meta) {
   const paramsList = document.getElementById('list-params');
   const datalist = document.getElementById('node-names');
 
-  if (!nodesList || !sheetsList || !calcsList || !paramsList || !datalist) return;
+  // Validate all required elements exist
+  if (!nodesList || !sheetsList || !calcsList || !paramsList || !datalist) {
+    console.warn('[populateLists] Missing required DOM elements:', {
+      nodesList: !!nodesList,
+      sheetsList: !!sheetsList,
+      calcsList: !!calcsList,
+      paramsList: !!paramsList,
+      datalist: !!datalist,
+    });
+    return;
+  }
+
+  // Validate meta and graph exist
+  if (!meta || !state.graph) {
+    console.warn('[populateLists] Invalid metadata or graph');
+    return;
+  }
 
   nodesList.innerHTML = '';
   sheetsList.innerHTML = '';
@@ -2347,27 +2545,34 @@ function populateLists(meta) {
   });
 
   sortedNodes.forEach((node) => {
-    nodesList.appendChild(createListItem(`${node.name} · ${node.type}`, node.id));
+    if (node && node.name && node.id && node.type) {
+      nodesList.appendChild(createListItem(`${node.name} · ${node.type}`, node.id));
+    }
   });
 
   (meta.worksheets || []).forEach((worksheet) => {
-    const worksheetIds = state.graph?.nodes.filter((node) => node.type === 'Worksheet' && node.rawName === worksheet.name) || [];
+    if (!worksheet || !worksheet.name) return;
+    const worksheetIds = state.graph?.nodes.filter((node) => node && node.type === 'Worksheet' && node.rawName === worksheet.name) || [];
     const nodeId = worksheetIds.length ? worksheetIds[0].id : null;
     // Worksheets can appear multiple times (dashboards). Use the first matching node ID.
     sheetsList.appendChild(createListItem(worksheet.name, nodeId));
   });
 
-  (state.graph?.nodes.filter((node) => node.type === 'CalculatedField') || []).forEach((node) => {
-    calcsList.appendChild(createListItem(node.name, node.id));
+  (state.graph?.nodes.filter((node) => node && node.type === 'CalculatedField') || []).forEach((node) => {
+    if (node && node.name && node.id) {
+      calcsList.appendChild(createListItem(node.name, node.id));
+    }
   });
 
-  (state.graph?.nodes.filter((node) => node.type === 'Parameter') || []).forEach((node) => {
-    paramsList.appendChild(createListItem(node.name, node.id));
+  (state.graph?.nodes.filter((node) => node && node.type === 'Parameter') || []).forEach((node) => {
+    if (node && node.name && node.id) {
+      paramsList.appendChild(createListItem(node.name, node.id));
+    }
   });
 
   const seenValues = new Set();
   (state.graph?.nodes || []).forEach((node) => {
-    if (!seenValues.has(node.name)) {
+    if (node && node.name && !seenValues.has(node.name)) {
       seenValues.add(node.name);
       const option = document.createElement('option');
       option.value = node.name;
