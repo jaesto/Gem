@@ -147,14 +147,185 @@ export function parseTwbText(xmlText) {
  * @returns {Object} Metadata object with datasources, parameters, worksheets, dashboards, lineage
  */
 export function parseFromXmlDocument(xml) {
-  // NOTE: This is a large function (~400 lines) extracted from app.js
-  // Implementation extracts all datasources, fields, calculations, worksheets, dashboards
-  // and builds lineage relationships
+  try {
+    if (!xml || !xml.documentElement) {
+      throw new Error('Invalid workbook XML document.');
+    }
 
-  // For the modular version, this would be the full implementation from app.js lines 1359-1800
-  // Extracted as-is to preserve exact parsing logic
+    if (!xml.querySelectorAll) {
+      throw new Error('XML document does not support querySelectorAll.');
+    }
 
-  throw new Error('parseFromXmlDocument: Full implementation to be migrated from app.js');
+  const meta = {
+    workbook_path: 'Browser Upload',
+    datasources: [],
+    parameters: [],
+    worksheets: [],
+    dashboards: [],
+    lineage: {
+      field_to_field: [],
+      field_to_sheet: [],
+    },
+  };
+
+  const datasourceNodes = Array.from(xml.querySelectorAll('datasource'));
+  datasourceNodes.forEach((datasourceNode, index) => {
+    const rawId = getAttr(datasourceNode, 'name') || '';
+    const caption = getAttr(datasourceNode, 'caption') || '';
+    const friendlyName = caption || rawId || `Datasource ${index + 1}`;
+    const datasource = {
+      id: rawId || friendlyName,
+      rawId: rawId || friendlyName,
+      caption,
+      name: friendlyName,
+      fields: [],
+      connections: Array.from(datasourceNode.querySelectorAll('connection')).map((connNode) => ({
+        id: getAttr(connNode, 'name') || '',
+        caption: getAttr(connNode, 'caption') || '',
+        class: getAttr(connNode, 'class') || '',
+        type: getAttr(connNode, 'type') || '',
+        server: getAttr(connNode, 'server') || '',
+        dbname: getAttr(connNode, 'dbname') || '',
+        warehouse: getAttr(connNode, 'warehouse') || '',
+      })),
+    };
+
+    const columnNodes = Array.from(datasourceNode.querySelectorAll('column'));
+    columnNodes.forEach((columnNode, columnIndex) => {
+      const fieldId = getAttr(columnNode, 'name') || '';
+      const fieldCaption = getAttr(columnNode, 'caption') || '';
+      const fieldName = fieldCaption || fieldId || `Field ${columnIndex + 1}`;
+      const datatype = getAttr(columnNode, 'datatype') || getAttr(columnNode, 'role') || '';
+      const defaultAggregation = getAttr(columnNode, 'default-aggregation') || getAttr(columnNode, 'aggregation') || '';
+      const role = getAttr(columnNode, 'role') || '';
+      const calculationNode = columnNode.querySelector('calculation');
+      const field = {
+        id: fieldId || fieldName,
+        rawId: fieldId || fieldName,
+        caption: fieldCaption,
+        name: fieldName,
+        datatype,
+        default_aggregation: defaultAggregation,
+        role,
+        is_calculated: Boolean(calculationNode),
+        datasource_id: datasource.rawId,
+      };
+      if (calculationNode) {
+        const formula = getAttr(calculationNode, 'formula') || calculationNode.textContent || '';
+        const calcClass = getAttr(calculationNode, 'class') || '';
+        const references = extractCalculationReferences(formula);
+        field.calculation = {
+          formula,
+          class: calcClass,
+        };
+        field.references = references;
+      }
+      datasource.fields.push(field);
+    });
+
+    meta.datasources.push(datasource);
+  });
+
+  const parameterNodes = Array.from(xml.querySelectorAll('parameter'));
+  parameterNodes.forEach((parameterNode, index) => {
+    const rawId = getAttr(parameterNode, 'name') || '';
+    const caption = getAttr(parameterNode, 'caption') || '';
+    const name = caption || rawId || `Parameter ${index + 1}`;
+    const datatype = getAttr(parameterNode, 'datatype') || '';
+    const currentValueNode = parameterNode.querySelector('current-value');
+    const currentValue = getAttr(parameterNode, 'value') || (currentValueNode ? currentValueNode.textContent : '') || '';
+    meta.parameters.push({
+      id: rawId || name,
+      rawId: rawId || name,
+      caption,
+      name,
+      datatype,
+      current_value: currentValue,
+    });
+  });
+
+  const worksheetNodes = Array.from(xml.querySelectorAll('worksheets > worksheet'));
+  worksheetNodes.forEach((worksheetNode, index) => {
+    const rawId = getAttr(worksheetNode, 'name') || '';
+    const caption = getAttr(worksheetNode, 'caption') || '';
+    const name = caption || rawId || `Worksheet ${index + 1}`;
+    const fieldsUsed = new Set();
+    Array.from(worksheetNode.querySelectorAll('datasource-dependencies column')).forEach((columnNode) => {
+      const ref = getAttr(columnNode, 'caption') || getAttr(columnNode, 'name');
+      if (ref) {
+        fieldsUsed.add(ref);
+      }
+    });
+    Array.from(worksheetNode.querySelectorAll('column')).forEach((columnNode) => {
+      const ref = getAttr(columnNode, 'caption') || getAttr(columnNode, 'name');
+      if (ref) {
+        fieldsUsed.add(ref);
+      }
+    });
+    const worksheet = {
+      id: rawId || name,
+      rawId: rawId || name,
+      caption,
+      name,
+      fields_used: Array.from(fieldsUsed),
+    };
+    meta.worksheets.push(worksheet);
+  });
+
+  const dashboardNodes = Array.from(xml.querySelectorAll('dashboards > dashboard'));
+  dashboardNodes.forEach((dashboardNode, index) => {
+    const rawId = getAttr(dashboardNode, 'name') || '';
+    const caption = getAttr(dashboardNode, 'caption') || '';
+    const name = caption || rawId || `Dashboard ${index + 1}`;
+    const worksheetRefs = new Set();
+    Array.from(dashboardNode.querySelectorAll('worksheet')).forEach((worksheetRefNode) => {
+      const ref = getAttr(worksheetRefNode, 'name') || getAttr(worksheetRefNode, 'sheet');
+      if (ref) {
+        worksheetRefs.add(ref);
+      }
+    });
+    Array.from(dashboardNode.querySelectorAll('zone')).forEach((zoneNode) => {
+      const ref = getAttr(zoneNode, 'worksheet') || getAttr(zoneNode, 'name');
+      if (ref) {
+        worksheetRefs.add(ref);
+      }
+    });
+    meta.dashboards.push({
+      id: rawId || name,
+      rawId: rawId || name,
+      caption,
+      name,
+      worksheets: Array.from(worksheetRefs),
+    });
+  });
+
+  const lineageFieldToField = [];
+  const lineageFieldToSheet = [];
+
+  meta.datasources.forEach((datasource) => {
+    datasource.fields.forEach((field) => {
+      if (field.is_calculated && field.references) {
+        field.references.fields.forEach((refName) => {
+          lineageFieldToField.push([refName, field.name]);
+        });
+      }
+    });
+  });
+
+  meta.worksheets.forEach((worksheet) => {
+    worksheet.fields_used.forEach((refName) => {
+      lineageFieldToSheet.push([refName, worksheet.name]);
+    });
+  });
+
+  meta.lineage.field_to_field = dedupePairs(lineageFieldToField);
+  meta.lineage.field_to_sheet = dedupePairs(lineageFieldToSheet);
+
+  return meta;
+  } catch (err) {
+    logger.error('[parseFromXmlDocument]', 'Failed:', err);
+    throw new Error(`Failed to parse workbook XML: ${err.message || err}`);
+  }
 }
 
 /**
@@ -165,10 +336,20 @@ export function parseFromXmlDocument(xml) {
  * @returns {Object} Object with fields and parameters arrays
  */
 export function extractCalculationReferences(formula) {
-  // NOTE: State machine parser from app.js lines 1557-1577
-  // Implementation to be migrated
-
-  throw new Error('extractCalculationReferences: Full implementation to be migrated from app.js');
+  if (!formula) {
+    return { fields: [], parameters: [] };
+  }
+  const fieldMatches = formula.match(/\[[^\]]+\]/g) || [];
+  const fields = Array.from(new Set(fieldMatches.map((value) => value.trim())));
+  const parameterMatches = formula.match(/\[:[^\]]+\]/g) || [];
+  const parameters = Array.from(
+    new Set(
+      parameterMatches
+        .map((value) => value.replace(/[\[\]:]/g, '').trim())
+        .filter(Boolean)
+    )
+  );
+  return { fields, parameters };
 }
 
 /**
@@ -177,10 +358,59 @@ export function extractCalculationReferences(formula) {
  * @returns {Array<Array<string>>} Array of cycles (each cycle is array of node IDs)
  */
 export function detectCycles(graph) {
-  // NOTE: DFS-based cycle detection from app.js lines 1598-1658
-  // Implementation to be migrated
+  if (!graph || !graph.nodes || !graph.edges) {
+    return [];
+  }
 
-  throw new Error('detectCycles: Full implementation to be migrated from app.js');
+  // Build adjacency list
+  const adjList = new Map();
+  graph.nodes.forEach((node) => {
+    if (node && node.id) {
+      adjList.set(node.id, []);
+    }
+  });
+
+  graph.edges.forEach((edge) => {
+    if (edge && edge.source && edge.target && adjList.has(edge.source)) {
+      adjList.get(edge.source).push(edge.target);
+    }
+  });
+
+  const visited = new Set();
+  const recStack = new Set();
+  const cycles = [];
+
+  function dfs(nodeId, path = []) {
+    visited.add(nodeId);
+    recStack.add(nodeId);
+    path.push(nodeId);
+
+    const neighbors = adjList.get(nodeId) || [];
+    for (const neighbor of neighbors) {
+      if (!visited.has(neighbor)) {
+        dfs(neighbor, [...path]);
+      } else if (recStack.has(neighbor)) {
+        // Found a cycle
+        const cycleStart = path.indexOf(neighbor);
+        if (cycleStart >= 0) {
+          const cycle = path.slice(cycleStart);
+          cycle.push(neighbor); // Complete the cycle
+          cycles.push(cycle);
+        }
+      }
+    }
+
+    recStack.delete(nodeId);
+  }
+
+  // Check all nodes for cycles
+  adjList.forEach((_, nodeId) => {
+    if (!visited.has(nodeId)) {
+      dfs(nodeId, []);
+    }
+  });
+
+  return cycles;
 }
 
 /**
