@@ -41,6 +41,8 @@
         </form>
       </div>
       <div class="right">
+        <button class="btn" id="undoBtn" type="button" title="Undo layout change" disabled>↶ Undo</button>
+        <button class="btn" id="redoBtn" type="button" title="Redo layout change" disabled>↷ Redo</button>
         <button class="btn" id="fitBtn" type="button" title="Zoom to the visible graph">Fit</button>
         <button class="btn" id="layoutBtn" type="button" title="Re-run the layout to spread nodes">Auto layout</button>
         <div class="dropdown" id="layoutDropdown">
@@ -100,6 +102,11 @@
             <hr />
             <label><input type="checkbox" data-filter="lodOnly" /> LOD only</label>
             <label><input type="checkbox" data-filter="tableCalcOnly" /> Table Calcs only</label>
+            <hr />
+            <label><input type="checkbox" data-filter="datatype-string" checked /> String types</label>
+            <label><input type="checkbox" data-filter="datatype-number" checked /> Number types</label>
+            <label><input type="checkbox" data-filter="datatype-date" checked /> Date types</label>
+            <label><input type="checkbox" data-filter="datatype-boolean" checked /> Boolean types</label>
           </div>
         </details>
         <!-- Export dropdown for documentation downloads -->
@@ -164,6 +171,7 @@
     </footer>
 
     <div id="errOverlay"></div>
+    <div id="edge-tooltip" class="edge-tooltip"></div>
 
     <script src="./lib/jszip.min.js"></script>
     <script src="./lib/cytoscape.min.js"></script>

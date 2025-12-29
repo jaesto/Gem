@@ -43,6 +43,11 @@ const state = {
     Parameter: true,
     lodOnly: false,
     tableCalcOnly: false,
+    // Data type filters
+    'datatype-string': true,
+    'datatype-number': true,
+    'datatype-date': true,
+    'datatype-boolean': true,
   },
   fileInfo: null,
   buildTimestamp: new Date().toISOString(),
@@ -59,6 +64,10 @@ const state = {
   },
   // Performance: virtual scrolling state
   virtualLists: new Map(), // Tracks virtual list instances
+  // Layout history for undo/redo
+  layoutHistory: [],
+  layoutHistoryIndex: -1,
+  maxHistorySize: 20, // Keep last 20 layout states
 };
 
 // Strip Tableau's square-bracket notation when normalizing names.
@@ -211,6 +220,107 @@ function memoize(cache, key, fn) {
 function clearMemoCache() {
   state.memoCache.neighborhoods.clear();
   state.memoCache.formulas.clear();
+}
+
+/**
+ * Layout History: Saves the current node positions to history stack.
+ */
+function saveLayoutState() {
+  if (!state.cy) return;
+
+  // Capture current positions
+  const positions = {};
+  state.cy.nodes().forEach((node) => {
+    const pos = node.position();
+    positions[node.id()] = { x: pos.x, y: pos.y };
+  });
+
+  // Remove any states after current index (if user did undo then made changes)
+  state.layoutHistory = state.layoutHistory.slice(0, state.layoutHistoryIndex + 1);
+
+  // Add new state
+  state.layoutHistory.push(positions);
+  state.layoutHistoryIndex++;
+
+  // Limit history size
+  if (state.layoutHistory.length > state.maxHistorySize) {
+    state.layoutHistory.shift();
+    state.layoutHistoryIndex--;
+  }
+
+  updateUndoRedoButtons();
+  logger.debug('[layoutHistory]', `Saved state ${state.layoutHistoryIndex + 1}/${state.layoutHistory.length}`);
+}
+
+/**
+ * Layout History: Restores node positions from a saved state.
+ * @param {object} positions - Map of node ID to {x, y} positions
+ */
+function restoreLayoutState(positions) {
+  if (!state.cy || !positions) return;
+
+  state.cy.batch(() => {
+    Object.keys(positions).forEach((nodeId) => {
+      const node = state.cy.getElementById(nodeId);
+      if (node && node.length) {
+        node.position(positions[nodeId]);
+      }
+    });
+  });
+
+  updateUndoRedoButtons();
+}
+
+/**
+ * Layout History: Undo last layout change.
+ */
+function undoLayout() {
+  if (state.layoutHistoryIndex <= 0) {
+    logger.info('[undoLayout]', 'No more states to undo');
+    return;
+  }
+
+  state.layoutHistoryIndex--;
+  const positions = state.layoutHistory[state.layoutHistoryIndex];
+  restoreLayoutState(positions);
+  logger.info('[undoLayout]', `Restored state ${state.layoutHistoryIndex + 1}/${state.layoutHistory.length}`);
+}
+
+/**
+ * Layout History: Redo previously undone layout change.
+ */
+function redoLayout() {
+  if (state.layoutHistoryIndex >= state.layoutHistory.length - 1) {
+    logger.info('[redoLayout]', 'No more states to redo');
+    return;
+  }
+
+  state.layoutHistoryIndex++;
+  const positions = state.layoutHistory[state.layoutHistoryIndex];
+  restoreLayoutState(positions);
+  logger.info('[redoLayout]', `Restored state ${state.layoutHistoryIndex + 1}/${state.layoutHistory.length}`);
+}
+
+/**
+ * Layout History: Updates undo/redo button states.
+ */
+function updateUndoRedoButtons() {
+  const undoBtn = document.getElementById('undoBtn');
+  const redoBtn = document.getElementById('redoBtn');
+
+  if (undoBtn) {
+    undoBtn.disabled = state.layoutHistoryIndex <= 0;
+    undoBtn.title = state.layoutHistoryIndex > 0
+      ? `Undo (${state.layoutHistoryIndex} states available)`
+      : 'Undo (nothing to undo)';
+  }
+
+  if (redoBtn) {
+    redoBtn.disabled = state.layoutHistoryIndex >= state.layoutHistory.length - 1;
+    redoBtn.title = state.layoutHistoryIndex < state.layoutHistory.length - 1
+      ? `Redo (${state.layoutHistory.length - state.layoutHistoryIndex - 1} states available)`
+      : 'Redo (nothing to redo)';
+  }
 }
 
 /**
@@ -678,6 +788,37 @@ function bindUI() {
     });
   }
 
+  // Undo/Redo buttons
+  const undoBtn = document.getElementById('undoBtn');
+  const redoBtn = document.getElementById('redoBtn');
+
+  if (undoBtn) {
+    undoBtn.addEventListener('click', () => undoLayout());
+  }
+
+  if (redoBtn) {
+    redoBtn.addEventListener('click', () => redoLayout());
+  }
+
+  // Keyboard shortcuts for undo/redo
+  registerEventListener(document, 'keydown', (event) => {
+    // Ctrl+Z or Cmd+Z for undo
+    if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
+      event.preventDefault();
+      undoLayout();
+    }
+    // Ctrl+Shift+Z or Cmd+Shift+Z for redo
+    if ((event.ctrlKey || event.metaKey) && event.key === 'z' && event.shiftKey) {
+      event.preventDefault();
+      redoLayout();
+    }
+    // Ctrl+Y or Cmd+Y for redo (alternative)
+    if ((event.ctrlKey || event.metaKey) && event.key === 'y') {
+      event.preventDefault();
+      redoLayout();
+    }
+  });
+
   state.hops = clampHop(state.hops || state.lastFocusDepth || HOP_MIN);
   syncHopControl(state.hops);
 
@@ -951,6 +1092,39 @@ function bootGraph() {
       syncListSelection(null);
     }
   });
+
+  // Edge tooltip on hover
+  const tooltip = document.getElementById('edge-tooltip');
+  if (tooltip) {
+    state.cy.on('mouseover', 'edge', (event) => {
+      const edge = event.target;
+      const data = edge.data();
+
+      // Build tooltip content
+      const source = edge.source().data('name') || edge.source().id();
+      const target = edge.target().data('name') || edge.target().id();
+      const label = data.label || 'depends on';
+
+      tooltip.textContent = `${source} ${label} ${target}`;
+
+      // Position tooltip at mouse location
+      tooltip.style.left = `${event.renderedPosition.x + 10}px`;
+      tooltip.style.top = `${event.renderedPosition.y + 10}px`;
+      tooltip.classList.add('visible');
+    });
+
+    state.cy.on('mouseout', 'edge', () => {
+      tooltip.classList.remove('visible');
+    });
+
+    // Update tooltip position on mouse move (optional, for smoother experience)
+    state.cy.on('mousemove', 'edge', (event) => {
+      if (tooltip.classList.contains('visible')) {
+        tooltip.style.left = `${event.renderedPosition.x + 10}px`;
+        tooltip.style.top = `${event.renderedPosition.y + 10}px`;
+      }
+    });
+  }
   } catch (err) {
     console.error('[bootGraph] Failed to initialize Cytoscape:', err);
     showError('Failed to initialize graph visualization', err);
@@ -2181,6 +2355,7 @@ function drawGraph(graph) {
 
 /**
  * Shows/hides nodes based on the active filter state and recalculates isolation mode.
+ * Supports node type filters, special filters (LOD, Table Calc), and data type filters.
  * @param {{rerunLayout?:boolean}} [options]
  */
 function applyFilters(options = {}) {
@@ -2189,6 +2364,8 @@ function applyFilters(options = {}) {
     state.cy.nodes().forEach((node) => {
       const data = node.data();
       let visible = Boolean(state.filters[data.type]);
+
+      // Apply special filters for calculated fields
       if (visible && data.type === 'CalculatedField') {
         if (state.filters.lodOnly) {
           visible = data.isLOD;
@@ -2197,6 +2374,48 @@ function applyFilters(options = {}) {
           visible = data.isTableCalc;
         }
       }
+
+      // Apply data type filters (only for fields and parameters)
+      if (visible && (data.type === 'Field' || data.type === 'CalculatedField' || data.type === 'Parameter') && data.datatype) {
+        const datatype = (data.datatype || '').toLowerCase();
+        let datatypeVisible = false;
+
+        // String types: string, text
+        if (state.filters['datatype-string'] &&
+            (datatype.includes('string') || datatype.includes('text'))) {
+          datatypeVisible = true;
+        }
+
+        // Number types: integer, real, number, decimal
+        if (state.filters['datatype-number'] &&
+            (datatype.includes('integer') || datatype.includes('real') ||
+             datatype.includes('number') || datatype.includes('decimal'))) {
+          datatypeVisible = true;
+        }
+
+        // Date types: date, datetime, timestamp
+        if (state.filters['datatype-date'] &&
+            (datatype.includes('date') || datatype.includes('time'))) {
+          datatypeVisible = true;
+        }
+
+        // Boolean types: boolean, bool
+        if (state.filters['datatype-boolean'] &&
+            (datatype.includes('boolean') || datatype.includes('bool'))) {
+          datatypeVisible = true;
+        }
+
+        // If none of the data type filters match, check if all are enabled (show all)
+        const allDatatypesEnabled = state.filters['datatype-string'] &&
+                                     state.filters['datatype-number'] &&
+                                     state.filters['datatype-date'] &&
+                                     state.filters['datatype-boolean'];
+
+        if (!allDatatypesEnabled) {
+          visible = visible && datatypeVisible;
+        }
+      }
+
       node.style('display', visible ? 'element' : 'none');
     });
     state.cy.edges().forEach((edge) => {
@@ -2266,6 +2485,9 @@ function runForceLayout() {
     return;
   }
 
+  // Save current layout state for undo/redo
+  saveLayoutState();
+
   try {
     const nm = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
     state.cy
@@ -2295,6 +2517,9 @@ function runGridLayout() {
     console.warn('[runGridLayout] Cytoscape not initialized');
     return;
   }
+
+  // Save current layout state for undo/redo
+  saveLayoutState();
 
   try {
     state.cy.layout({ name: 'grid', fit: true, avoidOverlap: true, condense: true, padding: 80 }).run();
@@ -2343,6 +2568,10 @@ function getHierarchyRootsAndLevels(cy) {
  */
 function runHierarchyLayout() {
   if (!state.cy) return;
+
+  // Save current layout state for undo/redo
+  saveLayoutState();
+
   const cy = state.cy;
   const { roots, rank } = getHierarchyRootsAndLevels(cy);
 
@@ -2908,6 +3137,69 @@ function syncListSelection(nodeId) {
 }
 
 /**
+ * Applies syntax highlighting to a Tableau formula.
+ * @param {string} formula - Raw formula text
+ * @returns {string} HTML string with syntax highlighting
+ */
+function highlightFormula(formula) {
+  if (!formula || typeof formula !== 'string') return '';
+
+  // Tableau keywords (IF, THEN, ELSE, CASE, WHEN, END, etc.)
+  const keywords = /\b(IF|THEN|ELSE|ELSEIF|END|CASE|WHEN|AND|OR|NOT|IN|IS|NULL|TRUE|FALSE)\b/gi;
+
+  // Tableau functions (SUM, AVG, COUNT, FIXED, INCLUDE, EXCLUDE, etc.)
+  const functions = /\b(SUM|AVG|MIN|MAX|COUNT|COUNTD|MEDIAN|STDEV|VAR|ATTR|FIXED|INCLUDE|EXCLUDE|WINDOW_SUM|WINDOW_AVG|WINDOW_MIN|WINDOW_MAX|WINDOW_COUNT|RUNNING_SUM|RUNNING_AVG|RUNNING_MIN|RUNNING_MAX|RUNNING_COUNT|RANK|RANK_UNIQUE|DENSE_RANK|INDEX|FIRST|LAST|SIZE|TOTAL|LOOKUP|PREVIOUS_VALUE|ZN|ISNULL|IFNULL|IIF|CONTAINS|STARTSWITH|ENDSWITH|FIND|LEFT|RIGHT|MID|REPLACE|SPLIT|TRIM|UPPER|LOWER|LEN|DATE|DATEADD|DATEDIFF|DATEPART|DATETRUNC|NOW|TODAY|YEAR|QUARTER|MONTH|DAY|ABS|CEILING|FLOOR|ROUND|SQRT|POWER|EXP|LN|LOG)\s*\(/gi;
+
+  // Strings (single or double quotes)
+  const strings = /(["'])(?:(?=(\\?))\2.)*?\1/g;
+
+  // Numbers (integers and decimals)
+  const numbers = /\b\d+\.?\d*\b/g;
+
+  // Field references [Field Name]
+  const fieldRefs = /\[([^\[\]:]+)\]/g;
+
+  // Parameter references [:Parameter Name]
+  const paramRefs = /\[:([\w\s]+)\]/g;
+
+  // Comments (Tableau uses // for comments)
+  const comments = /\/\/.*/g;
+
+  // Operators
+  const operators = /([+\-*/%=<>!&|])/g;
+
+  // Escape HTML first
+  let highlighted = escapeHtml(formula);
+
+  // Apply highlighting in specific order to avoid conflicts
+  // 1. Comments (must be first to not highlight within comments)
+  highlighted = highlighted.replace(comments, (match) => `<span class="comment">${match}</span>`);
+
+  // 2. Strings (must be before other patterns)
+  highlighted = highlighted.replace(strings, (match) => `<span class="string">${match}</span>`);
+
+  // 3. Parameter references [:Param]
+  highlighted = highlighted.replace(paramRefs, (match) => `<span class="param-ref">${match}</span>`);
+
+  // 4. Field references [Field]
+  highlighted = highlighted.replace(fieldRefs, (match) => `<span class="field-ref">${match}</span>`);
+
+  // 5. Functions (before keywords to avoid conflicts)
+  highlighted = highlighted.replace(functions, (match) => `<span class="function">${match}</span>`);
+
+  // 6. Keywords
+  highlighted = highlighted.replace(keywords, (match) => `<span class="keyword">${match}</span>`);
+
+  // 7. Numbers
+  highlighted = highlighted.replace(numbers, (match) => `<span class="number">${match}</span>`);
+
+  // 8. Operators
+  highlighted = highlighted.replace(operators, (match) => `<span class="operator">${match}</span>`);
+
+  return highlighted;
+}
+
+/**
  * Updates the right-hand details pane with metadata for the selected node.
  * @param {object|null} nodeData
  */
@@ -3010,12 +3302,13 @@ function renderDetails(nodeData) {
 
   panel.innerHTML = lines.join('');
 
-  // Render formulas via textContent so user-authored markup never executes and their spacing stays intact.
+  // Render formulas with syntax highlighting.
   // Chip detection leans on brace/keyword heuristics (plus the node flags) to highlight LOD and Table Calc formulas.
   if (formulaInfo) {
     const formulaEl = panel.querySelector('.formula');
     if (formulaEl) {
-      formulaEl.textContent = formulaInfo.text;
+      // Apply syntax highlighting to the formula
+      formulaEl.innerHTML = highlightFormula(formulaInfo.text);
     }
     const headingEl = panel.querySelector('.formula-heading');
     if (headingEl) {
