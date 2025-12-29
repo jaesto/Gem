@@ -52,6 +52,13 @@ const state = {
   graphResizeObserver: null,
   isProcessingFile: false,
   eventCleanup: [],
+  // Performance: memoization caches
+  memoCache: {
+    neighborhoods: new Map(), // Cache for getNeighborhood() results
+    formulas: new Map(),      // Cache for parsed formula references
+  },
+  // Performance: virtual scrolling state
+  virtualLists: new Map(), // Tracks virtual list instances
 };
 
 // Strip Tableau's square-bracket notation when normalizing names.
@@ -64,7 +71,245 @@ const HOP_MAX = 5;
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 const WARN_FILE_SIZE = 50 * 1024 * 1024; // 50 MB (warn user it might be slow)
 
+// Performance: Virtual scrolling threshold
+const VIRTUAL_SCROLL_THRESHOLD = 100; // Enable virtual scrolling for lists with >100 items
+const VIRTUAL_SCROLL_BUFFER = 20;     // Render 20 items above/below viewport
+const VIRTUAL_ITEM_HEIGHT = 32;       // Estimated height of each list item in pixels
+
+// Logging configuration
+const LOG_LEVELS = {
+  DEBUG: 0,
+  INFO: 1,
+  WARN: 2,
+  ERROR: 3,
+  NONE: 4
+};
+
+// Set to INFO for production, DEBUG for development
+const CURRENT_LOG_LEVEL = LOG_LEVELS.INFO;
+
 let onHopChange = null;
+
+/**
+ * Announces a message to screen readers via ARIA live region.
+ * @param {string} message
+ * @param {string} [priority='polite'] - 'polite' or 'assertive'
+ */
+function announce(message, priority = 'polite') {
+  const announcer = document.getElementById('sr-announcements');
+  if (!announcer) return;
+
+  announcer.textContent = '';
+  announcer.setAttribute('aria-live', priority);
+
+  // Small delay ensures screen readers pick up the change
+  setTimeout(() => {
+    announcer.textContent = message;
+  }, 100);
+}
+
+/**
+ * Logging utility with structured output and configurable levels.
+ * Provides context-aware logging with automatic categorization.
+ */
+const logger = {
+  /**
+   * Logs debug-level messages (detailed diagnostic information)
+   * @param {string} context - Function/module name (e.g., '[buildGraph]')
+   * @param {...any} args - Arguments to log
+   */
+  debug(context, ...args) {
+    if (CURRENT_LOG_LEVEL <= LOG_LEVELS.DEBUG) {
+      console.debug(`[DEBUG]${context}`, ...args);
+    }
+  },
+
+  /**
+   * Logs info-level messages (general informational messages)
+   * @param {string} context - Function/module name
+   * @param {...any} args - Arguments to log
+   */
+  info(context, ...args) {
+    if (CURRENT_LOG_LEVEL <= LOG_LEVELS.INFO) {
+      console.info(`[INFO]${context}`, ...args);
+    }
+  },
+
+  /**
+   * Logs warnings (potentially harmful situations)
+   * @param {string} context - Function/module name
+   * @param {...any} args - Arguments to log
+   */
+  warn(context, ...args) {
+    if (CURRENT_LOG_LEVEL <= LOG_LEVELS.WARN) {
+      console.warn(`[WARN]${context}`, ...args);
+    }
+  },
+
+  /**
+   * Logs errors (error events that might still allow the app to continue)
+   * @param {string} context - Function/module name
+   * @param {...any} args - Arguments to log
+   */
+  error(context, ...args) {
+    if (CURRENT_LOG_LEVEL <= LOG_LEVELS.ERROR) {
+      console.error(`[ERROR]${context}`, ...args);
+    }
+  },
+
+  /**
+   * Logs performance metrics
+   * @param {string} operation - Name of the operation
+   * @param {number} durationMs - Duration in milliseconds
+   * @param {object} [metadata] - Additional metadata
+   */
+  perf(operation, durationMs, metadata = {}) {
+    if (CURRENT_LOG_LEVEL <= LOG_LEVELS.INFO) {
+      const metaStr = Object.keys(metadata).length
+        ? ` | ${JSON.stringify(metadata)}`
+        : '';
+      console.info(`[PERF] ${operation}: ${durationMs.toFixed(2)}ms${metaStr}`);
+    }
+  },
+
+  /**
+   * Creates a timer for performance measurement
+   * @param {string} operation - Name of the operation to time
+   * @returns {Function} End function to call when operation completes
+   */
+  time(operation) {
+    const start = performance.now();
+    return (metadata) => {
+      const duration = performance.now() - start;
+      logger.perf(operation, duration, metadata);
+      return duration;
+    };
+  }
+};
+
+/**
+ * Performance: Memoizes expensive function calls.
+ * @param {Map} cache - Cache map to use
+ * @param {string} key - Cache key
+ * @param {Function} fn - Function to call if cache miss
+ * @returns {*} Cached or computed result
+ */
+function memoize(cache, key, fn) {
+  if (cache.has(key)) {
+    logger.debug('[memoize]', `Cache hit: ${key}`);
+    return cache.get(key);
+  }
+  logger.debug('[memoize]', `Cache miss: ${key}`);
+  const result = fn();
+  cache.set(key, result);
+  return result;
+}
+
+/**
+ * Performance: Clears all memoization caches.
+ */
+function clearMemoCache() {
+  state.memoCache.neighborhoods.clear();
+  state.memoCache.formulas.clear();
+}
+
+/**
+ * Performance: Creates a virtual scrolling list for large datasets.
+ * Only renders visible items + buffer to improve performance.
+ * @param {HTMLElement} container - Container element (ul/ol)
+ * @param {Array} items - Full array of items to render
+ * @param {Function} renderItem - Function that creates DOM element for each item
+ * @returns {Function} Cleanup function to remove event listeners
+ */
+function createVirtualList(container, items, renderItem) {
+  if (!container || items.length < VIRTUAL_SCROLL_THRESHOLD) {
+    // For small lists, render all items normally
+    items.forEach(item => {
+      const element = renderItem(item);
+      if (element) container.appendChild(element);
+    });
+    return () => {}; // No cleanup needed
+  }
+
+  // Virtual scrolling for large lists
+  const totalHeight = items.length * VIRTUAL_ITEM_HEIGHT;
+  const viewportHeight = container.parentElement?.clientHeight || 600;
+
+  // Create spacer to maintain scroll height
+  const spacer = document.createElement('div');
+  spacer.style.height = `${totalHeight}px`;
+  spacer.style.position = 'relative';
+  container.appendChild(spacer);
+
+  let currentStart = 0;
+  let currentEnd = 0;
+  const renderedElements = new Map();
+
+  function updateVisibleItems() {
+    const scrollTop = container.parentElement?.scrollTop || 0;
+    const start = Math.floor(scrollTop / VIRTUAL_ITEM_HEIGHT);
+    const visibleCount = Math.ceil(viewportHeight / VIRTUAL_ITEM_HEIGHT);
+
+    // Add buffer above and below viewport
+    const bufferStart = Math.max(0, start - VIRTUAL_SCROLL_BUFFER);
+    const bufferEnd = Math.min(items.length, start + visibleCount + VIRTUAL_SCROLL_BUFFER);
+
+    if (bufferStart === currentStart && bufferEnd === currentEnd) {
+      return; // No change needed
+    }
+
+    // Remove items outside visible range
+    for (let i = currentStart; i < bufferStart; i++) {
+      const elem = renderedElements.get(i);
+      if (elem && elem.parentNode) elem.parentNode.removeChild(elem);
+      renderedElements.delete(i);
+    }
+    for (let i = bufferEnd; i < currentEnd; i++) {
+      const elem = renderedElements.get(i);
+      if (elem && elem.parentNode) elem.parentNode.removeChild(elem);
+      renderedElements.delete(i);
+    }
+
+    // Add new items in visible range
+    for (let i = bufferStart; i < bufferEnd; i++) {
+      if (!renderedElements.has(i)) {
+        const item = items[i];
+        const elem = renderItem(item);
+        if (elem) {
+          elem.style.position = 'absolute';
+          elem.style.top = `${i * VIRTUAL_ITEM_HEIGHT}px`;
+          elem.style.width = '100%';
+          spacer.appendChild(elem);
+          renderedElements.set(i, elem);
+        }
+      }
+    }
+
+    currentStart = bufferStart;
+    currentEnd = bufferEnd;
+  }
+
+  // Initial render
+  updateVisibleItems();
+
+  // Update on scroll
+  const scrollHandler = () => {
+    requestAnimationFrame(updateVisibleItems);
+  };
+
+  const scrollContainer = container.parentElement;
+  if (scrollContainer) {
+    scrollContainer.addEventListener('scroll', scrollHandler, { passive: true });
+  }
+
+  // Return cleanup function
+  return () => {
+    if (scrollContainer) {
+      scrollContainer.removeEventListener('scroll', scrollHandler);
+    }
+    renderedElements.clear();
+  };
+}
 
 function clampHop(value) {
   const numeric = Number(value);
@@ -715,12 +960,18 @@ function bootGraph() {
 
 /**
  * Updates the floating status badge with contextual messaging.
+ * Also announces to screen readers.
  * @param {string} text
  */
 function setStatus(text) {
   const statusEl = document.getElementById('status');
   if (!statusEl) return;
   statusEl.textContent = text;
+
+  // Announce important status changes to screen readers
+  if (text && !text.includes('Loading') && !text.includes('...')) {
+    announce(text);
+  }
 }
 
 /**
@@ -1829,6 +2080,9 @@ function drawGraph(graph) {
     );
   }
 
+  // Performance: Clear memoization caches when loading new graph
+  clearMemoCache();
+
   try {
     if (!graph || typeof graph !== 'object') {
       throw new Error(
@@ -2374,6 +2628,7 @@ function setIsolatedMode(mode) {
 /**
  * Returns the closed neighborhood around a Cytoscape node for a given hop depth.
  * Includes cycle protection to prevent infinite loops.
+ * Performance: Results are memoized to avoid redundant calculations.
  * @param {cy.NodeSingular} node
  * @param {number} [depth]
  * @returns {cy.Collection}
@@ -2386,33 +2641,39 @@ function getNeighborhood(node, depth = 1) {
   // Limit depth to prevent performance issues from cycles
   const safeDepth = Math.min(Math.max(1, depth), 10);
   if (safeDepth !== depth) {
-    console.warn('[getNeighborhood] Depth clamped to', safeDepth, 'from', depth);
+    logger.warn('[getNeighborhood]', `Depth clamped to ${safeDepth} from ${depth}`);
   }
 
-  let hood = node.closedNeighborhood();
-  let prevSize = hood.length;
-  const MAX_ITERATIONS = 100; // Prevent infinite loops
-  let iterations = 0;
+  // Performance: Check memoization cache
+  const nodeId = node.id ? node.id() : String(node);
+  const cacheKey = `${nodeId}:${safeDepth}`;
 
-  for (let i = 1; i < safeDepth; i += 1) {
-    iterations++;
-    if (iterations > MAX_ITERATIONS) {
-      console.warn('[getNeighborhood] Max iterations reached, stopping expansion');
-      break;
+  return memoize(state.memoCache.neighborhoods, cacheKey, () => {
+    let hood = node.closedNeighborhood();
+    let prevSize = hood.length;
+    const MAX_ITERATIONS = 100; // Prevent infinite loops
+    let iterations = 0;
+
+    for (let i = 1; i < safeDepth; i += 1) {
+      iterations++;
+      if (iterations > MAX_ITERATIONS) {
+        logger.warn('[getNeighborhood]', 'Max iterations reached, stopping expansion');
+        break;
+      }
+
+      const newHood = hood.union(hood.closedNeighborhood());
+
+      // If neighborhood didn't grow, we've reached the graph boundary
+      if (newHood.length === prevSize) {
+        break;
+      }
+
+      hood = newHood;
+      prevSize = hood.length;
     }
 
-    const newHood = hood.union(hood.closedNeighborhood());
-
-    // If neighborhood didn't grow, we've reached the graph boundary
-    if (newHood.length === prevSize) {
-      break;
-    }
-
-    hood = newHood;
-    prevSize = hood.length;
-  }
-
-  return hood;
+    return hood;
+  });
 }
 
 /**
@@ -2422,18 +2683,18 @@ function getNeighborhood(node, depth = 1) {
  */
 function focusOnNode(id, options = {}) {
   if (!state.cy) {
-    console.warn('[focusOnNode] Cytoscape not initialized');
+    logger.warn('[focusOnNode]', 'Cytoscape not initialized');
     return;
   }
 
   if (!id || typeof id !== 'string') {
-    console.warn('[focusOnNode] Invalid node ID:', id);
+    logger.warn('[focusOnNode]', 'Invalid node ID:', id);
     return;
   }
 
   const node = state.cy.getElementById(id);
   if (!node || !node.length) {
-    console.warn('[focusOnNode] Node not found:', id);
+    logger.warn('[focusOnNode]', 'Node not found:', id);
     return;
   }
 
@@ -2458,6 +2719,12 @@ function focusOnNode(id, options = {}) {
 
     renderDetails(node.data());
     syncListSelection(id);
+
+    // Announce node selection to screen readers
+    const nodeData = node.data();
+    if (nodeData && nodeData.name) {
+      announce(`Selected ${nodeData.type || 'node'}: ${nodeData.name}`);
+    }
 
     if (!options.skipRelayout) {
       setIsolatedMode(state.isolatedMode || 'unhide');
@@ -2504,6 +2771,7 @@ function jumpToNode(query) {
 /**
  * Populates sidebar lists for nodes, sheets, calculations, and parameters.
  * Also refreshes the datalist used by the search box.
+ * Uses virtual scrolling for large lists to improve performance.
  * @param {object} meta
  */
 function populateLists(meta) {
@@ -2515,7 +2783,7 @@ function populateLists(meta) {
 
   // Validate all required elements exist
   if (!nodesList || !sheetsList || !calcsList || !paramsList || !datalist) {
-    console.warn('[populateLists] Missing required DOM elements:', {
+    logger.warn('[populateLists]', 'Missing required DOM elements:', {
       nodesList: !!nodesList,
       sheetsList: !!sheetsList,
       calcsList: !!calcsList,
@@ -2527,9 +2795,13 @@ function populateLists(meta) {
 
   // Validate meta and graph exist
   if (!meta || !state.graph) {
-    console.warn('[populateLists] Invalid metadata or graph');
+    logger.warn('[populateLists]', 'Invalid metadata or graph');
     return;
   }
+
+  // Clean up existing virtual list scroll handlers
+  state.virtualLists.forEach((cleanup) => cleanup());
+  state.virtualLists.clear();
 
   nodesList.innerHTML = '';
   sheetsList.innerHTML = '';
@@ -2537,39 +2809,56 @@ function populateLists(meta) {
   paramsList.innerHTML = '';
   datalist.innerHTML = '';
 
-  const sortedNodes = [...(state.graph?.nodes || [])].sort((a, b) => {
-    if (a.type === b.type) {
-      return a.name.localeCompare(b.name);
-    }
-    return a.type.localeCompare(b.type);
-  });
+  // Prepare node data
+  const sortedNodes = [...(state.graph?.nodes || [])]
+    .filter((node) => node && node.name && node.id && node.type)
+    .sort((a, b) => {
+      if (a.type === b.type) {
+        return a.name.localeCompare(b.name);
+      }
+      return a.type.localeCompare(b.type);
+    });
 
-  sortedNodes.forEach((node) => {
-    if (node && node.name && node.id && node.type) {
-      nodesList.appendChild(createListItem(`${node.name} · ${node.type}`, node.id));
-    }
-  });
+  const worksheetData = (meta.worksheets || [])
+    .filter((worksheet) => worksheet && worksheet.name)
+    .map((worksheet) => {
+      const worksheetIds = state.graph?.nodes.filter(
+        (node) => node && node.type === 'Worksheet' && node.rawName === worksheet.name
+      ) || [];
+      const nodeId = worksheetIds.length ? worksheetIds[0].id : null;
+      return { name: worksheet.name, nodeId };
+    });
 
-  (meta.worksheets || []).forEach((worksheet) => {
-    if (!worksheet || !worksheet.name) return;
-    const worksheetIds = state.graph?.nodes.filter((node) => node && node.type === 'Worksheet' && node.rawName === worksheet.name) || [];
-    const nodeId = worksheetIds.length ? worksheetIds[0].id : null;
-    // Worksheets can appear multiple times (dashboards). Use the first matching node ID.
-    sheetsList.appendChild(createListItem(worksheet.name, nodeId));
-  });
+  const calcData = (state.graph?.nodes || [])
+    .filter((node) => node && node.type === 'CalculatedField' && node.name && node.id)
+    .sort((a, b) => a.name.localeCompare(b.name));
 
-  (state.graph?.nodes.filter((node) => node && node.type === 'CalculatedField') || []).forEach((node) => {
-    if (node && node.name && node.id) {
-      calcsList.appendChild(createListItem(node.name, node.id));
-    }
-  });
+  const paramData = (state.graph?.nodes || [])
+    .filter((node) => node && node.type === 'Parameter' && node.name && node.id)
+    .sort((a, b) => a.name.localeCompare(b.name));
 
-  (state.graph?.nodes.filter((node) => node && node.type === 'Parameter') || []).forEach((node) => {
-    if (node && node.name && node.id) {
-      paramsList.appendChild(createListItem(node.name, node.id));
-    }
-  });
+  // Performance: Use virtual scrolling for large lists (>100 items)
+  const nodesCleanup = createVirtualList(nodesList, sortedNodes, (node) =>
+    createListItem(`${node.name} · ${node.type}`, node.id)
+  );
+  state.virtualLists.set('nodes', nodesCleanup);
 
+  const sheetsCleanup = createVirtualList(sheetsList, worksheetData, (item) =>
+    createListItem(item.name, item.nodeId)
+  );
+  state.virtualLists.set('sheets', sheetsCleanup);
+
+  const calcsCleanup = createVirtualList(calcsList, calcData, (node) =>
+    createListItem(node.name, node.id)
+  );
+  state.virtualLists.set('calcs', calcsCleanup);
+
+  const paramsCleanup = createVirtualList(paramsList, paramData, (node) =>
+    createListItem(node.name, node.id)
+  );
+  state.virtualLists.set('params', paramsCleanup);
+
+  // Populate search datalist (not virtualized - browser handles this)
   const seenValues = new Set();
   (state.graph?.nodes || []).forEach((node) => {
     if (node && node.name && !seenValues.has(node.name)) {
@@ -2579,6 +2868,12 @@ function populateLists(meta) {
       datalist.appendChild(option);
     }
   });
+
+  // Performance: Log if virtual scrolling was used
+  const totalNodes = sortedNodes.length;
+  if (totalNodes > VIRTUAL_SCROLL_THRESHOLD) {
+    logger.info('[populateLists]', `Virtual scrolling enabled for ${totalNodes} nodes`);
+  }
 }
 
 /**

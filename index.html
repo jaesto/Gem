@@ -16,8 +16,14 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <!-- Skip to main content link for keyboard users -->
+    <a href="#graph" class="skip-link">Skip to graph</a>
+
+    <!-- Screen reader announcements -->
+    <div id="sr-announcements" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+
     <!-- Top navigation bar with workbook controls, layouts, filters, exports, and theme toggle -->
-    <header class="topbar">
+    <header class="topbar" role="banner">
       <div class="left">
         <a class="brand" href="./">
           <img id="brandLogo"
@@ -111,7 +117,7 @@
     </header>
 
     <!-- Main layout: sidebar lists, graph canvas, and details panel -->
-    <main class="layout">
+    <main class="layout" role="main">
       <!-- Sidebar with drop zone and workbook navigation tabs -->
       <aside class="sidebar">
         <section id="dropZone" class="dropzone" aria-label="Workbook drop zone" tabindex="0">
@@ -141,19 +147,19 @@
       </aside>
 
       <!-- Cytoscape graph container and status overlay -->
-      <section class="graphwrap">
-        <div id="graph" aria-label="Graph canvas"></div>
-        <div id="status" class="status">No workbook loaded.</div>
+      <section class="graphwrap" role="region" aria-label="Graph visualization">
+        <div id="graph" aria-label="Workbook dependency graph" role="img" tabindex="0"></div>
+        <div id="status" class="status" role="status" aria-live="polite">No workbook loaded.</div>
       </section>
 
       <!-- Details pane surfaces metadata for the selected node -->
-      <aside class="details" id="details" aria-live="polite">
+      <aside class="details" id="details" role="complementary" aria-label="Node details" aria-live="polite" aria-atomic="false">
         <h2>No selection</h2>
         <p>Load a workbook and choose a node to see details.</p>
       </aside>
     </main>
 
-    <footer class="status-bar">
+    <footer class="status-bar" role="contentinfo">
       <span id="footer-info"></span>
     </footer>
 
