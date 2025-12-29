@@ -594,6 +594,44 @@ summary::-webkit-details-marker {
   padding: 10px;
   max-height: 240px;
   overflow: auto;
+  line-height: 1.5;
+}
+
+/* Formula syntax highlighting */
+.formula .keyword {
+  color: #C678DD; /* Purple for keywords */
+  font-weight: 600;
+}
+
+.formula .function {
+  color: #61AFEF; /* Blue for functions */
+}
+
+.formula .operator {
+  color: #56B6C2; /* Cyan for operators */
+}
+
+.formula .string {
+  color: #98C379; /* Green for strings */
+}
+
+.formula .number {
+  color: #D19A66; /* Orange for numbers */
+}
+
+.formula .field-ref {
+  color: #E5C07B; /* Yellow for field references */
+  font-style: italic;
+}
+
+.formula .param-ref {
+  color: #E06C75; /* Red for parameter references */
+  font-weight: 500;
+}
+
+.formula .comment {
+  color: #5C6370; /* Gray for comments */
+  font-style: italic;
 }
 
 .chip {
@@ -613,6 +651,27 @@ summary::-webkit-details-marker {
 
 .chip-table {
   border-color: rgba(34, 211, 238, 0.45);
+}
+
+/* Edge tooltip for hover */
+.edge-tooltip {
+  position: absolute;
+  background: var(--gem-surface-2);
+  border: 1px solid var(--gem-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--gem-text);
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  white-space: nowrap;
+}
+
+.edge-tooltip.visible {
+  opacity: 1;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -673,6 +732,25 @@ summary::-webkit-details-marker {
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   border: 0;
+  white-space: nowrap;
+}
+
+/* Skip link for keyboard navigation */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--gem-primary);
+  color: white;
+  padding: 8px 16px;
+  text-decoration: none;
+  border-radius: 0 0 4px 0;
+  z-index: 10000;
+  font-weight: 600;
+}
+
+.skip-link:focus {
+  top: 0;
 }
 
 .faded {

@@ -43,6 +43,11 @@ const state = {
     Parameter: true,
     lodOnly: false,
     tableCalcOnly: false,
+    // Data type filters
+    'datatype-string': true,
+    'datatype-number': true,
+    'datatype-date': true,
+    'datatype-boolean': true,
   },
   fileInfo: null,
   buildTimestamp: new Date().toISOString(),
@@ -52,6 +57,17 @@ const state = {
   graphResizeObserver: null,
   isProcessingFile: false,
   eventCleanup: [],
+  // Performance: memoization caches
+  memoCache: {
+    neighborhoods: new Map(), // Cache for getNeighborhood() results
+    formulas: new Map(),      // Cache for parsed formula references
+  },
+  // Performance: virtual scrolling state
+  virtualLists: new Map(), // Tracks virtual list instances
+  // Layout history for undo/redo
+  layoutHistory: [],
+  layoutHistoryIndex: -1,
+  maxHistorySize: 20, // Keep last 20 layout states
 };
 
 // Strip Tableau's square-bracket notation when normalizing names.
@@ -64,7 +80,346 @@ const HOP_MAX = 5;
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 const WARN_FILE_SIZE = 50 * 1024 * 1024; // 50 MB (warn user it might be slow)
 
+// Performance: Virtual scrolling threshold
+const VIRTUAL_SCROLL_THRESHOLD = 100; // Enable virtual scrolling for lists with >100 items
+const VIRTUAL_SCROLL_BUFFER = 20;     // Render 20 items above/below viewport
+const VIRTUAL_ITEM_HEIGHT = 32;       // Estimated height of each list item in pixels
+
+// Logging configuration
+const LOG_LEVELS = {
+  DEBUG: 0,
+  INFO: 1,
+  WARN: 2,
+  ERROR: 3,
+  NONE: 4
+};
+
+// Set to INFO for production, DEBUG for development
+const CURRENT_LOG_LEVEL = LOG_LEVELS.INFO;
+
 let onHopChange = null;
+
+/**
+ * Announces a message to screen readers via ARIA live region.
+ * @param {string} message
+ * @param {string} [priority='polite'] - 'polite' or 'assertive'
+ */
+function announce(message, priority = 'polite') {
+  const announcer = document.getElementById('sr-announcements');
+  if (!announcer) return;
+
+  announcer.textContent = '';
+  announcer.setAttribute('aria-live', priority);
+
+  // Small delay ensures screen readers pick up the change
+  setTimeout(() => {
+    announcer.textContent = message;
+  }, 100);
+}
+
+/**
+ * Logging utility with structured output and configurable levels.
+ * Provides context-aware logging with automatic categorization.
+ */
+const logger = {
+  /**
+   * Logs debug-level messages (detailed diagnostic information)
+   * @param {string} context - Function/module name (e.g., '[buildGraph]')
+   * @param {...any} args - Arguments to log
+   */
+  debug(context, ...args) {
+    if (CURRENT_LOG_LEVEL <= LOG_LEVELS.DEBUG) {
+      console.debug(`[DEBUG]${context}`, ...args);
+    }
+  },
+
+  /**
+   * Logs info-level messages (general informational messages)
+   * @param {string} context - Function/module name
+   * @param {...any} args - Arguments to log
+   */
+  info(context, ...args) {
+    if (CURRENT_LOG_LEVEL <= LOG_LEVELS.INFO) {
+      console.info(`[INFO]${context}`, ...args);
+    }
+  },
+
+  /**
+   * Logs warnings (potentially harmful situations)
+   * @param {string} context - Function/module name
+   * @param {...any} args - Arguments to log
+   */
+  warn(context, ...args) {
+    if (CURRENT_LOG_LEVEL <= LOG_LEVELS.WARN) {
+      console.warn(`[WARN]${context}`, ...args);
+    }
+  },
+
+  /**
+   * Logs errors (error events that might still allow the app to continue)
+   * @param {string} context - Function/module name
+   * @param {...any} args - Arguments to log
+   */
+  error(context, ...args) {
+    if (CURRENT_LOG_LEVEL <= LOG_LEVELS.ERROR) {
+      console.error(`[ERROR]${context}`, ...args);
+    }
+  },
+
+  /**
+   * Logs performance metrics
+   * @param {string} operation - Name of the operation
+   * @param {number} durationMs - Duration in milliseconds
+   * @param {object} [metadata] - Additional metadata
+   */
+  perf(operation, durationMs, metadata = {}) {
+    if (CURRENT_LOG_LEVEL <= LOG_LEVELS.INFO) {
+      const metaStr = Object.keys(metadata).length
+        ? ` | ${JSON.stringify(metadata)}`
+        : '';
+      console.info(`[PERF] ${operation}: ${durationMs.toFixed(2)}ms${metaStr}`);
+    }
+  },
+
+  /**
+   * Creates a timer for performance measurement
+   * @param {string} operation - Name of the operation to time
+   * @returns {Function} End function to call when operation completes
+   */
+  time(operation) {
+    const start = performance.now();
+    return (metadata) => {
+      const duration = performance.now() - start;
+      logger.perf(operation, duration, metadata);
+      return duration;
+    };
+  }
+};
+
+/**
+ * Performance: Memoizes expensive function calls.
+ * @param {Map} cache - Cache map to use
+ * @param {string} key - Cache key
+ * @param {Function} fn - Function to call if cache miss
+ * @returns {*} Cached or computed result
+ */
+function memoize(cache, key, fn) {
+  if (cache.has(key)) {
+    logger.debug('[memoize]', `Cache hit: ${key}`);
+    return cache.get(key);
+  }
+  logger.debug('[memoize]', `Cache miss: ${key}`);
+  const result = fn();
+  cache.set(key, result);
+  return result;
+}
+
+/**
+ * Performance: Clears all memoization caches.
+ */
+function clearMemoCache() {
+  state.memoCache.neighborhoods.clear();
+  state.memoCache.formulas.clear();
+}
+
+/**
+ * Layout History: Saves the current node positions to history stack.
+ */
+function saveLayoutState() {
+  if (!state.cy) return;
+
+  // Capture current positions
+  const positions = {};
+  state.cy.nodes().forEach((node) => {
+    const pos = node.position();
+    positions[node.id()] = { x: pos.x, y: pos.y };
+  });
+
+  // Remove any states after current index (if user did undo then made changes)
+  state.layoutHistory = state.layoutHistory.slice(0, state.layoutHistoryIndex + 1);
+
+  // Add new state
+  state.layoutHistory.push(positions);
+  state.layoutHistoryIndex++;
+
+  // Limit history size
+  if (state.layoutHistory.length > state.maxHistorySize) {
+    state.layoutHistory.shift();
+    state.layoutHistoryIndex--;
+  }
+
+  updateUndoRedoButtons();
+  logger.debug('[layoutHistory]', `Saved state ${state.layoutHistoryIndex + 1}/${state.layoutHistory.length}`);
+}
+
+/**
+ * Layout History: Restores node positions from a saved state.
+ * @param {object} positions - Map of node ID to {x, y} positions
+ */
+function restoreLayoutState(positions) {
+  if (!state.cy || !positions) return;
+
+  state.cy.batch(() => {
+    Object.keys(positions).forEach((nodeId) => {
+      const node = state.cy.getElementById(nodeId);
+      if (node && node.length) {
+        node.position(positions[nodeId]);
+      }
+    });
+  });
+
+  updateUndoRedoButtons();
+}
+
+/**
+ * Layout History: Undo last layout change.
+ */
+function undoLayout() {
+  if (state.layoutHistoryIndex <= 0) {
+    logger.info('[undoLayout]', 'No more states to undo');
+    return;
+  }
+
+  state.layoutHistoryIndex--;
+  const positions = state.layoutHistory[state.layoutHistoryIndex];
+  restoreLayoutState(positions);
+  logger.info('[undoLayout]', `Restored state ${state.layoutHistoryIndex + 1}/${state.layoutHistory.length}`);
+}
+
+/**
+ * Layout History: Redo previously undone layout change.
+ */
+function redoLayout() {
+  if (state.layoutHistoryIndex >= state.layoutHistory.length - 1) {
+    logger.info('[redoLayout]', 'No more states to redo');
+    return;
+  }
+
+  state.layoutHistoryIndex++;
+  const positions = state.layoutHistory[state.layoutHistoryIndex];
+  restoreLayoutState(positions);
+  logger.info('[redoLayout]', `Restored state ${state.layoutHistoryIndex + 1}/${state.layoutHistory.length}`);
+}
+
+/**
+ * Layout History: Updates undo/redo button states.
+ */
+function updateUndoRedoButtons() {
+  const undoBtn = document.getElementById('undoBtn');
+  const redoBtn = document.getElementById('redoBtn');
+
+  if (undoBtn) {
+    undoBtn.disabled = state.layoutHistoryIndex <= 0;
+    undoBtn.title = state.layoutHistoryIndex > 0
+      ? `Undo (${state.layoutHistoryIndex} states available)`
+      : 'Undo (nothing to undo)';
+  }
+
+  if (redoBtn) {
+    redoBtn.disabled = state.layoutHistoryIndex >= state.layoutHistory.length - 1;
+    redoBtn.title = state.layoutHistoryIndex < state.layoutHistory.length - 1
+      ? `Redo (${state.layoutHistory.length - state.layoutHistoryIndex - 1} states available)`
+      : 'Redo (nothing to redo)';
+  }
+}
+
+/**
+ * Performance: Creates a virtual scrolling list for large datasets.
+ * Only renders visible items + buffer to improve performance.
+ * @param {HTMLElement} container - Container element (ul/ol)
+ * @param {Array} items - Full array of items to render
+ * @param {Function} renderItem - Function that creates DOM element for each item
+ * @returns {Function} Cleanup function to remove event listeners
+ */
+function createVirtualList(container, items, renderItem) {
+  if (!container || items.length < VIRTUAL_SCROLL_THRESHOLD) {
+    // For small lists, render all items normally
+    items.forEach(item => {
+      const element = renderItem(item);
+      if (element) container.appendChild(element);
+    });
+    return () => {}; // No cleanup needed
+  }
+
+  // Virtual scrolling for large lists
+  const totalHeight = items.length * VIRTUAL_ITEM_HEIGHT;
+  const viewportHeight = container.parentElement?.clientHeight || 600;
+
+  // Create spacer to maintain scroll height
+  const spacer = document.createElement('div');
+  spacer.style.height = `${totalHeight}px`;
+  spacer.style.position = 'relative';
+  container.appendChild(spacer);
+
+  let currentStart = 0;
+  let currentEnd = 0;
+  const renderedElements = new Map();
+
+  function updateVisibleItems() {
+    const scrollTop = container.parentElement?.scrollTop || 0;
+    const start = Math.floor(scrollTop / VIRTUAL_ITEM_HEIGHT);
+    const visibleCount = Math.ceil(viewportHeight / VIRTUAL_ITEM_HEIGHT);
+
+    // Add buffer above and below viewport
+    const bufferStart = Math.max(0, start - VIRTUAL_SCROLL_BUFFER);
+    const bufferEnd = Math.min(items.length, start + visibleCount + VIRTUAL_SCROLL_BUFFER);
+
+    if (bufferStart === currentStart && bufferEnd === currentEnd) {
+      return; // No change needed
+    }
+
+    // Remove items outside visible range
+    for (let i = currentStart; i < bufferStart; i++) {
+      const elem = renderedElements.get(i);
+      if (elem && elem.parentNode) elem.parentNode.removeChild(elem);
+      renderedElements.delete(i);
+    }
+    for (let i = bufferEnd; i < currentEnd; i++) {
+      const elem = renderedElements.get(i);
+      if (elem && elem.parentNode) elem.parentNode.removeChild(elem);
+      renderedElements.delete(i);
+    }
+
+    // Add new items in visible range
+    for (let i = bufferStart; i < bufferEnd; i++) {
+      if (!renderedElements.has(i)) {
+        const item = items[i];
+        const elem = renderItem(item);
+        if (elem) {
+          elem.style.position = 'absolute';
+          elem.style.top = `${i * VIRTUAL_ITEM_HEIGHT}px`;
+          elem.style.width = '100%';
+          spacer.appendChild(elem);
+          renderedElements.set(i, elem);
+        }
+      }
+    }
+
+    currentStart = bufferStart;
+    currentEnd = bufferEnd;
+  }
+
+  // Initial render
+  updateVisibleItems();
+
+  // Update on scroll
+  const scrollHandler = () => {
+    requestAnimationFrame(updateVisibleItems);
+  };
+
+  const scrollContainer = container.parentElement;
+  if (scrollContainer) {
+    scrollContainer.addEventListener('scroll', scrollHandler, { passive: true });
+  }
+
+  // Return cleanup function
+  return () => {
+    if (scrollContainer) {
+      scrollContainer.removeEventListener('scroll', scrollHandler);
+    }
+    renderedElements.clear();
+  };
+}
 
 function clampHop(value) {
   const numeric = Number(value);
@@ -433,6 +788,37 @@ function bindUI() {
     });
   }
 
+  // Undo/Redo buttons
+  const undoBtn = document.getElementById('undoBtn');
+  const redoBtn = document.getElementById('redoBtn');
+
+  if (undoBtn) {
+    undoBtn.addEventListener('click', () => undoLayout());
+  }
+
+  if (redoBtn) {
+    redoBtn.addEventListener('click', () => redoLayout());
+  }
+
+  // Keyboard shortcuts for undo/redo
+  registerEventListener(document, 'keydown', (event) => {
+    // Ctrl+Z or Cmd+Z for undo
+    if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
+      event.preventDefault();
+      undoLayout();
+    }
+    // Ctrl+Shift+Z or Cmd+Shift+Z for redo
+    if ((event.ctrlKey || event.metaKey) && event.key === 'z' && event.shiftKey) {
+      event.preventDefault();
+      redoLayout();
+    }
+    // Ctrl+Y or Cmd+Y for redo (alternative)
+    if ((event.ctrlKey || event.metaKey) && event.key === 'y') {
+      event.preventDefault();
+      redoLayout();
+    }
+  });
+
   state.hops = clampHop(state.hops || state.lastFocusDepth || HOP_MIN);
   syncHopControl(state.hops);
 
@@ -706,6 +1092,39 @@ function bootGraph() {
       syncListSelection(null);
     }
   });
+
+  // Edge tooltip on hover
+  const tooltip = document.getElementById('edge-tooltip');
+  if (tooltip) {
+    state.cy.on('mouseover', 'edge', (event) => {
+      const edge = event.target;
+      const data = edge.data();
+
+      // Build tooltip content
+      const source = edge.source().data('name') || edge.source().id();
+      const target = edge.target().data('name') || edge.target().id();
+      const label = data.label || 'depends on';
+
+      tooltip.textContent = `${source} ${label} ${target}`;
+
+      // Position tooltip at mouse location
+      tooltip.style.left = `${event.renderedPosition.x + 10}px`;
+      tooltip.style.top = `${event.renderedPosition.y + 10}px`;
+      tooltip.classList.add('visible');
+    });
+
+    state.cy.on('mouseout', 'edge', () => {
+      tooltip.classList.remove('visible');
+    });
+
+    // Update tooltip position on mouse move (optional, for smoother experience)
+    state.cy.on('mousemove', 'edge', (event) => {
+      if (tooltip.classList.contains('visible')) {
+        tooltip.style.left = `${event.renderedPosition.x + 10}px`;
+        tooltip.style.top = `${event.renderedPosition.y + 10}px`;
+      }
+    });
+  }
   } catch (err) {
     console.error('[bootGraph] Failed to initialize Cytoscape:', err);
     showError('Failed to initialize graph visualization', err);
@@ -715,12 +1134,18 @@ function bootGraph() {
 
 /**
  * Updates the floating status badge with contextual messaging.
+ * Also announces to screen readers.
  * @param {string} text
  */
 function setStatus(text) {
   const statusEl = document.getElementById('status');
   if (!statusEl) return;
   statusEl.textContent = text;
+
+  // Announce important status changes to screen readers
+  if (text && !text.includes('Loading') && !text.includes('...')) {
+    announce(text);
+  }
 }
 
 /**
@@ -1829,6 +2254,9 @@ function drawGraph(graph) {
     );
   }
 
+  // Performance: Clear memoization caches when loading new graph
+  clearMemoCache();
+
   try {
     if (!graph || typeof graph !== 'object') {
       throw new Error(
@@ -1927,6 +2355,7 @@ function drawGraph(graph) {
 
 /**
  * Shows/hides nodes based on the active filter state and recalculates isolation mode.
+ * Supports node type filters, special filters (LOD, Table Calc), and data type filters.
  * @param {{rerunLayout?:boolean}} [options]
  */
 function applyFilters(options = {}) {
@@ -1935,6 +2364,8 @@ function applyFilters(options = {}) {
     state.cy.nodes().forEach((node) => {
       const data = node.data();
       let visible = Boolean(state.filters[data.type]);
+
+      // Apply special filters for calculated fields
       if (visible && data.type === 'CalculatedField') {
         if (state.filters.lodOnly) {
           visible = data.isLOD;
@@ -1943,6 +2374,48 @@ function applyFilters(options = {}) {
           visible = data.isTableCalc;
         }
       }
+
+      // Apply data type filters (only for fields and parameters)
+      if (visible && (data.type === 'Field' || data.type === 'CalculatedField' || data.type === 'Parameter') && data.datatype) {
+        const datatype = (data.datatype || '').toLowerCase();
+        let datatypeVisible = false;
+
+        // String types: string, text
+        if (state.filters['datatype-string'] &&
+            (datatype.includes('string') || datatype.includes('text'))) {
+          datatypeVisible = true;
+        }
+
+        // Number types: integer, real, number, decimal
+        if (state.filters['datatype-number'] &&
+            (datatype.includes('integer') || datatype.includes('real') ||
+             datatype.includes('number') || datatype.includes('decimal'))) {
+          datatypeVisible = true;
+        }
+
+        // Date types: date, datetime, timestamp
+        if (state.filters['datatype-date'] &&
+            (datatype.includes('date') || datatype.includes('time'))) {
+          datatypeVisible = true;
+        }
+
+        // Boolean types: boolean, bool
+        if (state.filters['datatype-boolean'] &&
+            (datatype.includes('boolean') || datatype.includes('bool'))) {
+          datatypeVisible = true;
+        }
+
+        // If none of the data type filters match, check if all are enabled (show all)
+        const allDatatypesEnabled = state.filters['datatype-string'] &&
+                                     state.filters['datatype-number'] &&
+                                     state.filters['datatype-date'] &&
+                                     state.filters['datatype-boolean'];
+
+        if (!allDatatypesEnabled) {
+          visible = visible && datatypeVisible;
+        }
+      }
+
       node.style('display', visible ? 'element' : 'none');
     });
     state.cy.edges().forEach((edge) => {
@@ -2012,6 +2485,9 @@ function runForceLayout() {
     return;
   }
 
+  // Save current layout state for undo/redo
+  saveLayoutState();
+
   try {
     const nm = (typeof hasBilkent !== 'undefined' && hasBilkent) ? 'cose-bilkent' : 'cose';
     state.cy
@@ -2041,6 +2517,9 @@ function runGridLayout() {
     console.warn('[runGridLayout] Cytoscape not initialized');
     return;
   }
+
+  // Save current layout state for undo/redo
+  saveLayoutState();
 
   try {
     state.cy.layout({ name: 'grid', fit: true, avoidOverlap: true, condense: true, padding: 80 }).run();
@@ -2089,6 +2568,10 @@ function getHierarchyRootsAndLevels(cy) {
  */
 function runHierarchyLayout() {
   if (!state.cy) return;
+
+  // Save current layout state for undo/redo
+  saveLayoutState();
+
   const cy = state.cy;
   const { roots, rank } = getHierarchyRootsAndLevels(cy);
 
@@ -2374,6 +2857,7 @@ function setIsolatedMode(mode) {
 /**
  * Returns the closed neighborhood around a Cytoscape node for a given hop depth.
  * Includes cycle protection to prevent infinite loops.
+ * Performance: Results are memoized to avoid redundant calculations.
  * @param {cy.NodeSingular} node
  * @param {number} [depth]
  * @returns {cy.Collection}
@@ -2386,33 +2870,39 @@ function getNeighborhood(node, depth = 1) {
   // Limit depth to prevent performance issues from cycles
   const safeDepth = Math.min(Math.max(1, depth), 10);
   if (safeDepth !== depth) {
-    console.warn('[getNeighborhood] Depth clamped to', safeDepth, 'from', depth);
+    logger.warn('[getNeighborhood]', `Depth clamped to ${safeDepth} from ${depth}`);
   }
 
-  let hood = node.closedNeighborhood();
-  let prevSize = hood.length;
-  const MAX_ITERATIONS = 100; // Prevent infinite loops
-  let iterations = 0;
+  // Performance: Check memoization cache
+  const nodeId = node.id ? node.id() : String(node);
+  const cacheKey = `${nodeId}:${safeDepth}`;
 
-  for (let i = 1; i < safeDepth; i += 1) {
-    iterations++;
-    if (iterations > MAX_ITERATIONS) {
-      console.warn('[getNeighborhood] Max iterations reached, stopping expansion');
-      break;
+  return memoize(state.memoCache.neighborhoods, cacheKey, () => {
+    let hood = node.closedNeighborhood();
+    let prevSize = hood.length;
+    const MAX_ITERATIONS = 100; // Prevent infinite loops
+    let iterations = 0;
+
+    for (let i = 1; i < safeDepth; i += 1) {
+      iterations++;
+      if (iterations > MAX_ITERATIONS) {
+        logger.warn('[getNeighborhood]', 'Max iterations reached, stopping expansion');
+        break;
+      }
+
+      const newHood = hood.union(hood.closedNeighborhood());
+
+      // If neighborhood didn't grow, we've reached the graph boundary
+      if (newHood.length === prevSize) {
+        break;
+      }
+
+      hood = newHood;
+      prevSize = hood.length;
     }
 
-    const newHood = hood.union(hood.closedNeighborhood());
-
-    // If neighborhood didn't grow, we've reached the graph boundary
-    if (newHood.length === prevSize) {
-      break;
-    }
-
-    hood = newHood;
-    prevSize = hood.length;
-  }
-
-  return hood;
+    return hood;
+  });
 }
 
 /**
@@ -2422,18 +2912,18 @@ function getNeighborhood(node, depth = 1) {
  */
 function focusOnNode(id, options = {}) {
   if (!state.cy) {
-    console.warn('[focusOnNode] Cytoscape not initialized');
+    logger.warn('[focusOnNode]', 'Cytoscape not initialized');
     return;
   }
 
   if (!id || typeof id !== 'string') {
-    console.warn('[focusOnNode] Invalid node ID:', id);
+    logger.warn('[focusOnNode]', 'Invalid node ID:', id);
     return;
   }
 
   const node = state.cy.getElementById(id);
   if (!node || !node.length) {
-    console.warn('[focusOnNode] Node not found:', id);
+    logger.warn('[focusOnNode]', 'Node not found:', id);
     return;
   }
 
@@ -2458,6 +2948,12 @@ function focusOnNode(id, options = {}) {
 
     renderDetails(node.data());
     syncListSelection(id);
+
+    // Announce node selection to screen readers
+    const nodeData = node.data();
+    if (nodeData && nodeData.name) {
+      announce(`Selected ${nodeData.type || 'node'}: ${nodeData.name}`);
+    }
 
     if (!options.skipRelayout) {
       setIsolatedMode(state.isolatedMode || 'unhide');
@@ -2504,6 +3000,7 @@ function jumpToNode(query) {
 /**
  * Populates sidebar lists for nodes, sheets, calculations, and parameters.
  * Also refreshes the datalist used by the search box.
+ * Uses virtual scrolling for large lists to improve performance.
  * @param {object} meta
  */
 function populateLists(meta) {
@@ -2515,7 +3012,7 @@ function populateLists(meta) {
 
   // Validate all required elements exist
   if (!nodesList || !sheetsList || !calcsList || !paramsList || !datalist) {
-    console.warn('[populateLists] Missing required DOM elements:', {
+    logger.warn('[populateLists]', 'Missing required DOM elements:', {
       nodesList: !!nodesList,
       sheetsList: !!sheetsList,
       calcsList: !!calcsList,
@@ -2527,9 +3024,13 @@ function populateLists(meta) {
 
   // Validate meta and graph exist
   if (!meta || !state.graph) {
-    console.warn('[populateLists] Invalid metadata or graph');
+    logger.warn('[populateLists]', 'Invalid metadata or graph');
     return;
   }
+
+  // Clean up existing virtual list scroll handlers
+  state.virtualLists.forEach((cleanup) => cleanup());
+  state.virtualLists.clear();
 
   nodesList.innerHTML = '';
   sheetsList.innerHTML = '';
@@ -2537,39 +3038,56 @@ function populateLists(meta) {
   paramsList.innerHTML = '';
   datalist.innerHTML = '';
 
-  const sortedNodes = [...(state.graph?.nodes || [])].sort((a, b) => {
-    if (a.type === b.type) {
-      return a.name.localeCompare(b.name);
-    }
-    return a.type.localeCompare(b.type);
-  });
+  // Prepare node data
+  const sortedNodes = [...(state.graph?.nodes || [])]
+    .filter((node) => node && node.name && node.id && node.type)
+    .sort((a, b) => {
+      if (a.type === b.type) {
+        return a.name.localeCompare(b.name);
+      }
+      return a.type.localeCompare(b.type);
+    });
 
-  sortedNodes.forEach((node) => {
-    if (node && node.name && node.id && node.type) {
-      nodesList.appendChild(createListItem(`${node.name} · ${node.type}`, node.id));
-    }
-  });
+  const worksheetData = (meta.worksheets || [])
+    .filter((worksheet) => worksheet && worksheet.name)
+    .map((worksheet) => {
+      const worksheetIds = state.graph?.nodes.filter(
+        (node) => node && node.type === 'Worksheet' && node.rawName === worksheet.name
+      ) || [];
+      const nodeId = worksheetIds.length ? worksheetIds[0].id : null;
+      return { name: worksheet.name, nodeId };
+    });
 
-  (meta.worksheets || []).forEach((worksheet) => {
-    if (!worksheet || !worksheet.name) return;
-    const worksheetIds = state.graph?.nodes.filter((node) => node && node.type === 'Worksheet' && node.rawName === worksheet.name) || [];
-    const nodeId = worksheetIds.length ? worksheetIds[0].id : null;
-    // Worksheets can appear multiple times (dashboards). Use the first matching node ID.
-    sheetsList.appendChild(createListItem(worksheet.name, nodeId));
-  });
+  const calcData = (state.graph?.nodes || [])
+    .filter((node) => node && node.type === 'CalculatedField' && node.name && node.id)
+    .sort((a, b) => a.name.localeCompare(b.name));
 
-  (state.graph?.nodes.filter((node) => node && node.type === 'CalculatedField') || []).forEach((node) => {
-    if (node && node.name && node.id) {
-      calcsList.appendChild(createListItem(node.name, node.id));
-    }
-  });
+  const paramData = (state.graph?.nodes || [])
+    .filter((node) => node && node.type === 'Parameter' && node.name && node.id)
+    .sort((a, b) => a.name.localeCompare(b.name));
 
-  (state.graph?.nodes.filter((node) => node && node.type === 'Parameter') || []).forEach((node) => {
-    if (node && node.name && node.id) {
-      paramsList.appendChild(createListItem(node.name, node.id));
-    }
-  });
+  // Performance: Use virtual scrolling for large lists (>100 items)
+  const nodesCleanup = createVirtualList(nodesList, sortedNodes, (node) =>
+    createListItem(`${node.name} · ${node.type}`, node.id)
+  );
+  state.virtualLists.set('nodes', nodesCleanup);
 
+  const sheetsCleanup = createVirtualList(sheetsList, worksheetData, (item) =>
+    createListItem(item.name, item.nodeId)
+  );
+  state.virtualLists.set('sheets', sheetsCleanup);
+
+  const calcsCleanup = createVirtualList(calcsList, calcData, (node) =>
+    createListItem(node.name, node.id)
+  );
+  state.virtualLists.set('calcs', calcsCleanup);
+
+  const paramsCleanup = createVirtualList(paramsList, paramData, (node) =>
+    createListItem(node.name, node.id)
+  );
+  state.virtualLists.set('params', paramsCleanup);
+
+  // Populate search datalist (not virtualized - browser handles this)
   const seenValues = new Set();
   (state.graph?.nodes || []).forEach((node) => {
     if (node && node.name && !seenValues.has(node.name)) {
@@ -2579,6 +3097,12 @@ function populateLists(meta) {
       datalist.appendChild(option);
     }
   });
+
+  // Performance: Log if virtual scrolling was used
+  const totalNodes = sortedNodes.length;
+  if (totalNodes > VIRTUAL_SCROLL_THRESHOLD) {
+    logger.info('[populateLists]', `Virtual scrolling enabled for ${totalNodes} nodes`);
+  }
 }
 
 /**
@@ -2610,6 +3134,69 @@ function syncListSelection(nodeId) {
   document.querySelectorAll('.tab-panel button[data-node-id]').forEach((button) => {
     button.classList.toggle('active', button.dataset.nodeId === nodeId);
   });
+}
+
+/**
+ * Applies syntax highlighting to a Tableau formula.
+ * @param {string} formula - Raw formula text
+ * @returns {string} HTML string with syntax highlighting
+ */
+function highlightFormula(formula) {
+  if (!formula || typeof formula !== 'string') return '';
+
+  // Tableau keywords (IF, THEN, ELSE, CASE, WHEN, END, etc.)
+  const keywords = /\b(IF|THEN|ELSE|ELSEIF|END|CASE|WHEN|AND|OR|NOT|IN|IS|NULL|TRUE|FALSE)\b/gi;
+
+  // Tableau functions (SUM, AVG, COUNT, FIXED, INCLUDE, EXCLUDE, etc.)
+  const functions = /\b(SUM|AVG|MIN|MAX|COUNT|COUNTD|MEDIAN|STDEV|VAR|ATTR|FIXED|INCLUDE|EXCLUDE|WINDOW_SUM|WINDOW_AVG|WINDOW_MIN|WINDOW_MAX|WINDOW_COUNT|RUNNING_SUM|RUNNING_AVG|RUNNING_MIN|RUNNING_MAX|RUNNING_COUNT|RANK|RANK_UNIQUE|DENSE_RANK|INDEX|FIRST|LAST|SIZE|TOTAL|LOOKUP|PREVIOUS_VALUE|ZN|ISNULL|IFNULL|IIF|CONTAINS|STARTSWITH|ENDSWITH|FIND|LEFT|RIGHT|MID|REPLACE|SPLIT|TRIM|UPPER|LOWER|LEN|DATE|DATEADD|DATEDIFF|DATEPART|DATETRUNC|NOW|TODAY|YEAR|QUARTER|MONTH|DAY|ABS|CEILING|FLOOR|ROUND|SQRT|POWER|EXP|LN|LOG)\s*\(/gi;
+
+  // Strings (single or double quotes)
+  const strings = /(["'])(?:(?=(\\?))\2.)*?\1/g;
+
+  // Numbers (integers and decimals)
+  const numbers = /\b\d+\.?\d*\b/g;
+
+  // Field references [Field Name]
+  const fieldRefs = /\[([^\[\]:]+)\]/g;
+
+  // Parameter references [:Parameter Name]
+  const paramRefs = /\[:([\w\s]+)\]/g;
+
+  // Comments (Tableau uses // for comments)
+  const comments = /\/\/.*/g;
+
+  // Operators
+  const operators = /([+\-*/%=<>!&|])/g;
+
+  // Escape HTML first
+  let highlighted = escapeHtml(formula);
+
+  // Apply highlighting in specific order to avoid conflicts
+  // 1. Comments (must be first to not highlight within comments)
+  highlighted = highlighted.replace(comments, (match) => `<span class="comment">${match}</span>`);
+
+  // 2. Strings (must be before other patterns)
+  highlighted = highlighted.replace(strings, (match) => `<span class="string">${match}</span>`);
+
+  // 3. Parameter references [:Param]
+  highlighted = highlighted.replace(paramRefs, (match) => `<span class="param-ref">${match}</span>`);
+
+  // 4. Field references [Field]
+  highlighted = highlighted.replace(fieldRefs, (match) => `<span class="field-ref">${match}</span>`);
+
+  // 5. Functions (before keywords to avoid conflicts)
+  highlighted = highlighted.replace(functions, (match) => `<span class="function">${match}</span>`);
+
+  // 6. Keywords
+  highlighted = highlighted.replace(keywords, (match) => `<span class="keyword">${match}</span>`);
+
+  // 7. Numbers
+  highlighted = highlighted.replace(numbers, (match) => `<span class="number">${match}</span>`);
+
+  // 8. Operators
+  highlighted = highlighted.replace(operators, (match) => `<span class="operator">${match}</span>`);
+
+  return highlighted;
 }
 
 /**
@@ -2715,12 +3302,13 @@ function renderDetails(nodeData) {
 
   panel.innerHTML = lines.join('');
 
-  // Render formulas via textContent so user-authored markup never executes and their spacing stays intact.
+  // Render formulas with syntax highlighting.
   // Chip detection leans on brace/keyword heuristics (plus the node flags) to highlight LOD and Table Calc formulas.
   if (formulaInfo) {
     const formulaEl = panel.querySelector('.formula');
     if (formulaEl) {
-      formulaEl.textContent = formulaInfo.text;
+      // Apply syntax highlighting to the formula
+      formulaEl.innerHTML = highlightFormula(formulaInfo.text);
     }
     const headingEl = panel.querySelector('.formula-heading');
     if (headingEl) {
