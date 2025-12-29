@@ -50,6 +50,8 @@ const state = {
   lastFocusDepth: 1,
   hops: 1,
   graphResizeObserver: null,
+  isProcessingFile: false,
+  eventCleanup: [],
 };
 
 // Strip Tableau's square-bracket notation when normalizing names.
@@ -57,6 +59,10 @@ const NAME_NORMALIZER = /[\[\]]/g;
 
 const HOP_MIN = 1;
 const HOP_MAX = 5;
+
+// File size limits (in bytes)
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+const WARN_FILE_SIZE = 50 * 1024 * 1024; // 50 MB (warn user it might be slow)
 
 let onHopChange = null;
 
@@ -137,32 +143,101 @@ function setLayoutButton(label) {
 
 /**
  * Displays an error overlay and logs the details for debugging.
+ * SECURITY: Uses textContent to prevent XSS attacks. Never exposes stack traces in production.
  * @param {string} msg
  * @param {Error|string} [err]
  */
 function showError(msg, err) {
   const el = document.getElementById('errOverlay');
   if (!el) return;
+
+  // Clear previous content safely
   el.style.display = 'block';
-  el.innerHTML =
-    '<strong>Error</strong><pre>' +
-    (msg || '') +
-    (err ? `\n${err.stack || err.message || err}` : '') +
-    '</pre>';
+  el.textContent = '';
+
+  // Create elements safely without innerHTML
+  const title = document.createElement('strong');
+  title.textContent = 'Error';
+
+  const pre = document.createElement('pre');
+  const errorMessage = msg || 'An error occurred';
+
+  // Extract safe error details without exposing stack traces in production
+  let errorDetails = '';
+  if (err) {
+    if (typeof err === 'string') {
+      errorDetails = err;
+    } else if (err.message) {
+      // Only show message, not stack trace (security risk)
+      errorDetails = err.message;
+    } else {
+      errorDetails = String(err);
+    }
+  }
+
+  // Use textContent to prevent XSS
+  pre.textContent = errorMessage + (errorDetails ? `\n${errorDetails}` : '');
+
+  el.appendChild(title);
+  el.appendChild(pre);
+
+  // Log full details to console for debugging (not visible to end users)
   console.error('[viewer]', msg, err);
 }
 
+// Cleanup function to remove all event listeners
+function cleanupEventListeners() {
+  state.eventCleanup.forEach((cleanup) => {
+    try {
+      cleanup();
+    } catch (err) {
+      console.warn('Failed to cleanup event listener:', err);
+    }
+  });
+  state.eventCleanup = [];
+}
+
+// Helper to register cleanup functions
+function registerEventListener(target, event, handler, options) {
+  target.addEventListener(event, handler, options);
+  state.eventCleanup.push(() => target.removeEventListener(event, handler, options));
+}
+
+// Debounce helper for performance
+function debounce(fn, delay) {
+  let timeoutId = null;
+  return function (...args) {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn.apply(this, args), delay);
+  };
+}
+
 if (typeof window !== 'undefined') {
-  window.addEventListener('error', (event) => {
+  const handleError = (event) => {
     const detail = event.error || event.message;
     showError('Uncaught error:', detail);
-  });
-  window.addEventListener('unhandledrejection', (event) => {
+  };
+
+  const handleRejection = (event) => {
     showError('Unhandled promise rejection:', event.reason);
-  });
-  window.addEventListener('resize', () => {
+  };
+
+  const handleResize = debounce(() => {
     if (state.cy) {
       state.cy.resize();
+    }
+  }, 150);
+
+  registerEventListener(window, 'error', handleError);
+  registerEventListener(window, 'unhandledrejection', handleRejection);
+  registerEventListener(window, 'resize', handleResize);
+
+  // Cleanup on page unload
+  registerEventListener(window, 'beforeunload', () => {
+    cleanupEventListeners();
+    if (state.graphResizeObserver) {
+      state.graphResizeObserver.disconnect();
+      state.graphResizeObserver = null;
     }
   });
 }
@@ -518,10 +593,15 @@ function bindUI() {
  * Subsequent workbook loads reuse this instance to avoid reinitializing extensions.
  */
 function bootGraph() {
-  const graphContainerEl = document.getElementById('graph');
-  if (!graphContainerEl) {
-    throw new Error('Graph container missing.');
-  }
+  try {
+    const graphContainerEl = document.getElementById('graph');
+    if (!graphContainerEl) {
+      throw new Error('Graph container element #graph not found in DOM');
+    }
+
+    if (typeof cytoscape !== 'function') {
+      throw new Error('Cytoscape library not loaded');
+    }
 
   state.cy = cytoscape({
     container: graphContainerEl,
@@ -580,24 +660,30 @@ function bootGraph() {
   });
   state.cy.on('unselect', 'node', () => state.cy.elements().removeClass('faded'));
 
+  // Properly cleanup previous ResizeObserver
   if (state.graphResizeObserver) {
     try {
       state.graphResizeObserver.disconnect();
     } catch (error) {
       console.warn('Failed to disconnect previous ResizeObserver', error);
+    } finally {
+      state.graphResizeObserver = null;
     }
-    state.graphResizeObserver = null;
   }
 
   if (window.ResizeObserver && graphContainerEl) {
-    const ro = new ResizeObserver(() => {
-      if (state.cy) {
-        state.cy.resize();
-      }
-    });
-    // Keep Cytoscape sized with CSS-driven layout changes.
-    ro.observe(graphContainerEl);
-    state.graphResizeObserver = ro;
+    try {
+      const ro = new ResizeObserver(() => {
+        if (state.cy) {
+          state.cy.resize();
+        }
+      });
+      // Keep Cytoscape sized with CSS-driven layout changes.
+      ro.observe(graphContainerEl);
+      state.graphResizeObserver = ro;
+    } catch (error) {
+      console.warn('Failed to create ResizeObserver:', error);
+    }
   }
 
   state.cy.on('tap', 'node', (event) => {
@@ -614,6 +700,11 @@ function bootGraph() {
       syncListSelection(null);
     }
   });
+  } catch (err) {
+    console.error('[bootGraph] Failed to initialize Cytoscape:', err);
+    showError('Failed to initialize graph visualization', err);
+    throw err;
+  }
 }
 
 /**
@@ -632,10 +723,44 @@ function setStatus(text) {
  */
 async function handleFiles(fileList) {
   if (!fileList || !fileList.length) return;
+
+  // Prevent race condition - only process one file at a time
+  if (state.isProcessingFile) {
+    showError('File upload in progress', 'Please wait for the current file to finish loading.');
+    return;
+  }
+
   const file = fileList[0];
   if (!file) return;
 
   const displayName = file.name || 'Workbook';
+  const fileSize = file.size || 0;
+
+  // Validate file size
+  if (fileSize === 0) {
+    showError('Invalid file', 'The selected file is empty (0 bytes).');
+    return;
+  }
+
+  if (fileSize > MAX_FILE_SIZE) {
+    const sizeMB = (fileSize / (1024 * 1024)).toFixed(1);
+    const maxMB = (MAX_FILE_SIZE / (1024 * 1024)).toFixed(0);
+    showError(
+      'File too large',
+      `File size is ${sizeMB} MB, which exceeds the ${maxMB} MB limit. Large workbooks may crash your browser.`
+    );
+    return;
+  }
+
+  // Warn about large files
+  if (fileSize > WARN_FILE_SIZE) {
+    const sizeMB = (fileSize / (1024 * 1024)).toFixed(1);
+    console.warn(`Large file detected: ${sizeMB} MB. Processing may be slow.`);
+    setStatus?.(`Loading large file (${sizeMB} MB)... This may take a moment.`);
+  }
+
+  // Set processing flag to prevent concurrent uploads
+  state.isProcessingFile = true;
 
   try {
     setStatus?.(`Loading: ${displayName}`);
@@ -662,6 +787,8 @@ async function handleFiles(fileList) {
     showErrorOverlay?.('Failed to open workbook. See console for details.');
     setStatus?.('Open failed.');
   } finally {
+    // Always release the processing lock
+    state.isProcessingFile = false;
     updateFooter();
   }
 }
@@ -672,35 +799,105 @@ async function handleFiles(fileList) {
  * @param {ArrayBuffer} arrayBuffer
  */
 async function parseWorkbookFile(filename, arrayBuffer) {
-  const lower = (filename || '').toLowerCase();
+  if (!filename || typeof filename !== 'string') {
+    throw new Error('Invalid filename');
+  }
+
+  if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+    throw new Error('Invalid or empty file buffer');
+  }
+
+  const lower = filename.toLowerCase();
   if (lower.endsWith('.twbx')) return parseTwbx(arrayBuffer);
   if (lower.endsWith('.twb')) return parseTwb(arrayBuffer);
-  throw new Error('Unsupported file type: ' + filename);
+
+  // Provide helpful error message for unsupported types
+  const extension = filename.split('.').pop() || 'unknown';
+  throw new Error(
+    `Unsupported file type: .${extension}. Please upload a Tableau workbook (.twb or .twbx file).`
+  );
 }
 
 async function parseTwbx(buf) {
   console.debug('[Open] parseTwbx start');
-  const zip = await JSZip.loadAsync(buf);
-  const entry = Object.values(zip.files).find((f) => f.name.toLowerCase().endsWith('.twb'));
-  if (!entry) throw new Error('No .twb found inside .twbx');
-  const xml = await entry.async('text');
-  return parseTwbText(xml);
+  try {
+    if (!buf || buf.byteLength === 0) {
+      throw new Error('Empty or invalid file buffer');
+    }
+
+    const zip = await JSZip.loadAsync(buf).catch((err) => {
+      throw new Error(`Failed to unzip .twbx file: ${err.message || err}`);
+    });
+
+    const entry = Object.values(zip.files).find((f) => f.name.toLowerCase().endsWith('.twb'));
+    if (!entry) {
+      throw new Error('No .twb file found inside .twbx archive');
+    }
+
+    const xml = await entry.async('text').catch((err) => {
+      throw new Error(`Failed to extract .twb from archive: ${err.message || err}`);
+    });
+
+    if (!xml || xml.trim().length === 0) {
+      throw new Error('Extracted .twb file is empty');
+    }
+
+    return parseTwbText(xml);
+  } catch (err) {
+    console.error('[parseTwbx] Failed:', err);
+    throw err;
+  }
 }
 
 async function parseTwb(buf) {
   console.debug('[Open] parseTwb start');
-  const xml = new TextDecoder('utf-8').decode(buf);
-  return parseTwbText(xml);
+  try {
+    if (!buf || buf.byteLength === 0) {
+      throw new Error('Empty or invalid file buffer');
+    }
+
+    const xml = new TextDecoder('utf-8').decode(buf);
+    if (!xml || xml.trim().length === 0) {
+      throw new Error('File is empty or contains no text');
+    }
+
+    return parseTwbText(xml);
+  } catch (err) {
+    console.error('[parseTwb] Failed:', err);
+    throw err;
+  }
 }
 
 function parseTwbText(xmlText) {
-  const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
-  const errorNode = doc.querySelector('parsererror');
-  if (errorNode) {
-    const message = errorNode.textContent?.trim() || 'Unable to parse workbook XML.';
-    throw new Error(message);
+  try {
+    if (!xmlText || typeof xmlText !== 'string') {
+      throw new Error('Invalid XML text provided');
+    }
+
+    const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+
+    // Check for parse errors
+    const errorNode = doc.querySelector('parsererror');
+    if (errorNode) {
+      const message = errorNode.textContent?.trim() || 'Unable to parse workbook XML.';
+      throw new Error(`XML parsing failed: ${message}`);
+    }
+
+    // Validate it's actually a Tableau workbook
+    if (!doc.documentElement) {
+      throw new Error('XML document is missing root element');
+    }
+
+    const rootTag = doc.documentElement.tagName.toLowerCase();
+    if (rootTag !== 'workbook') {
+      throw new Error(`Invalid Tableau workbook: expected <workbook> root, found <${rootTag}>`);
+    }
+
+    return parseFromXmlDocument(doc);
+  } catch (err) {
+    console.error('[parseTwbText] Failed:', err);
+    throw err;
   }
-  return parseFromXmlDocument(doc);
 }
 
 /**
@@ -710,9 +907,14 @@ function parseTwbText(xmlText) {
  * @returns {object}
  */
 function parseFromXmlDocument(xml) {
-  if (!xml || !xml.documentElement) {
-    throw new Error('Invalid workbook XML.');
-  }
+  try {
+    if (!xml || !xml.documentElement) {
+      throw new Error('Invalid workbook XML document.');
+    }
+
+    if (!xml.querySelectorAll) {
+      throw new Error('XML document does not support querySelectorAll.');
+    }
 
   const meta = {
     workbook_path: 'Browser Upload',
@@ -880,6 +1082,10 @@ function parseFromXmlDocument(xml) {
   meta.lineage.field_to_sheet = dedupePairs(lineageFieldToSheet);
 
   return meta;
+  } catch (err) {
+    console.error('[parseFromXmlDocument] Failed:', err);
+    throw new Error(`Failed to parse workbook XML: ${err.message || err}`);
+  }
 }
 
 /**
@@ -940,6 +1146,11 @@ function dedupePairs(pairs) {
  * @returns {WorkbookGraph}
  */
 function buildGraph(meta) {
+  try {
+    if (!meta || typeof meta !== 'object') {
+      throw new Error('Invalid metadata object provided to buildGraph');
+    }
+
   state.nodeIndex = new Map();
   state.lookupEntries = [];
   state.lookupMap = new Map();
@@ -1080,7 +1291,16 @@ function buildGraph(meta) {
     if (!slug) slug = `${prefix}-${usedIds.size + 1}`;
     let fallback = `${prefix}:${slug}`;
     let counter = 2;
+    const MAX_ITERATIONS = 10000; // Prevent infinite loops
+
     while (usedIds.has(fallback)) {
+      if (counter > MAX_ITERATIONS) {
+        // Failsafe: use timestamp-based unique ID
+        const uniqueId = `${prefix}:${slug}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        console.error('[Graph] Failed to generate unique ID after', MAX_ITERATIONS, 'attempts. Using fallback:', uniqueId);
+        usedIds.add(uniqueId);
+        return uniqueId;
+      }
       fallback = `${prefix}:${slug}-${counter}`;
       counter += 1;
     }
@@ -1264,7 +1484,12 @@ function buildGraph(meta) {
   // Sorted entries drive datalist suggestions and fuzzy text searches.
   state.lookupEntries = lookupEntries.sort((a, b) => a.label.localeCompare(b.label));
 
+  console.debug('[buildGraph] Created', nodes.length, 'nodes and', edges.length, 'edges');
   return { nodes, edges };
+  } catch (err) {
+    console.error('[buildGraph] Failed:', err);
+    throw new Error(`Failed to build graph: ${err.message || err}`);
+  }
 }
 
 /**
@@ -1494,7 +1719,14 @@ function slugify(text) {
  * @param {WorkbookGraph} graph
  */
 function drawGraph(graph) {
-  if (!state.cy) return;
+  if (!state.cy) {
+    throw new Error('Cytoscape instance not initialized');
+  }
+
+  try {
+    if (!graph || typeof graph !== 'object') {
+      throw new Error('Invalid graph object provided to drawGraph');
+    }
   const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
   const edges = Array.isArray(graph?.edges) ? graph.edges : [];
 
@@ -1578,6 +1810,11 @@ function drawGraph(graph) {
   setLayoutButton('Auto');
 
   console.log('Graph ready:', state.cy.nodes().length, 'nodes /', state.cy.edges().length, 'edges');
+  } catch (err) {
+    console.error('[drawGraph] Failed:', err);
+    showError('Failed to render graph', err);
+    throw err;
+  }
 }
 
 /**
@@ -2489,15 +2726,25 @@ function buildDot(meta) {
  * @param {string} [mime]
  */
 function downloadBlob(filename, content, mime = 'text/plain') {
-  const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  let url = null;
+  try {
+    const blob = new Blob([content], { type: mime });
+    url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  } catch (error) {
+    console.error('Download failed:', error);
+    showError('Failed to download file', error);
+  } finally {
+    // Always revoke the URL to prevent memory leaks
+    if (url) {
+      URL.revokeObjectURL(url);
+    }
+  }
 }
 
 /**
