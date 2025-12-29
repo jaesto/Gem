@@ -6,12 +6,12 @@
  * Wires together all modules and sets up the application
  */
 
-import { state, resetState } from './state.js';
+import { state } from './state.js';
 import { logger } from './logger.js';
 import { debounce } from './utils.js';
 import { bootGraph, applyCyTheme } from './cytoscape-config.js';
 import { runForceLayout, runGridLayout, runHierarchyLayout, runCenteredHierarchyLayout, runCenteredFromSelectionLayout } from './layouts.js';
-import { applyFilters, syncHopControl, expandNeighbors, focusOnNode } from './filters.js';
+import { applyFilters, syncHopControl, expandNeighbors, focusOnNode, setIsolatedMode } from './filters.js';
 import { renderDetails, syncListSelection } from './rendering.js';
 import { bindUI, setStatus, showError } from './ui-handlers.js';
 import { undoLayout, redoLayout } from './history.js';
@@ -49,6 +49,37 @@ function setupGlobalErrorHandlers() {
       state.graphResizeObserver = null;
     }
   });
+}
+
+/**
+ * Binds undo/redo and layout buttons
+ * @private
+ */
+function bindToolbarButtons() {
+  const undoBtn = document.getElementById('undoBtn');
+  const redoBtn = document.getElementById('redoBtn');
+  const layoutBtn = document.getElementById('layoutBtn');
+
+  if (undoBtn) {
+    undoBtn.addEventListener('click', () => {
+      undoLayout();
+    });
+  }
+
+  if (redoBtn) {
+    redoBtn.addEventListener('click', () => {
+      redoLayout();
+    });
+  }
+
+  if (layoutBtn) {
+    layoutBtn.addEventListener('click', () => {
+      const dependencies = { showError };
+      runForceLayout(dependencies);
+    });
+  }
+
+  logger.debug('[main]', 'Toolbar buttons bound');
 }
 
 /**
@@ -236,7 +267,6 @@ function bindIsolatedMenu() {
     if (!item) return;
     const mode = item.dataset.iso;
     if (mode) {
-      const { setIsolatedMode } = await import('./filters.js');
       setIsolatedMode(mode);
     }
     close();
@@ -300,6 +330,9 @@ function initialize() {
 
     // Bind UI event handlers
     bindUI();
+
+    // Setup toolbar buttons
+    bindToolbarButtons();
 
     // Setup menus and controls
     bindLayoutMenu();
