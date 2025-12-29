@@ -40,7 +40,9 @@ export async function parseTwbx(file) {
       throw new Error('JSZip library not loaded. Cannot parse .twbx files.');
     }
 
-    const zip = await JSZip.loadAsync(file);
+    // Get the ArrayBuffer from the file object
+    const buf = await file.arrayBuffer();
+    const zip = await JSZip.loadAsync(buf);
     const twbFiles = Object.keys(zip.files).filter((name) => name.endsWith('.twb'));
 
     if (!twbFiles.length) {
