@@ -15,6 +15,7 @@ import { applyFilters, syncHopControl, expandNeighbors, focusOnNode, setIsolated
 import { renderDetails, syncListSelection } from './rendering.js';
 import { bindUI, setStatus, showError } from './ui-handlers.js';
 import { undoLayout, redoLayout } from './history.js';
+import { bindExportHandlers } from './exports.js';
 
 /**
  * Global error handlers for uncaught errors and promise rejections
@@ -339,6 +340,9 @@ function initialize() {
     bindHopMenu();
     bindIsolatedMenu();
     bindFilters();
+
+    // Setup export handlers
+    bindExportHandlers();
 
     // Setup keyboard shortcuts
     setupKeyboardShortcuts();

@@ -53,8 +53,8 @@ export async function parseTwbx(file) {
     }
 
     const twbFile = zip.files[twbFiles[0]];
-    const buf = await twbFile.async('uint8array');
-    const xml = new TextDecoder('utf-8').decode(buf);
+    const twbData = await twbFile.async('uint8array');
+    const xml = new TextDecoder('utf-8').decode(twbData);
 
     if (!xml || xml.trim().length === 0) {
       throw new Error('File is empty or contains no text');
