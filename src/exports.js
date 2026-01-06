@@ -33,84 +33,361 @@ function formatBytes(bytes) {
  */
 export function buildMarkdown(meta) {
   const lines = [];
+
+  // Calculate summary statistics
+  const stats = calculateStats(meta);
+
+  // ===== HEADER =====
   lines.push('# Tableau Workbook Documentation');
   lines.push('');
-  lines.push(`- Source: ${meta.workbook_path}`);
+  lines.push(`**Source:** ${meta.workbook_path}`);
   if (state.fileInfo) {
-    lines.push(`- File size: ${formatBytes(state.fileInfo.size)}`);
+    lines.push(`**File size:** ${formatBytes(state.fileInfo.size)}`);
   }
   if (state.buildTimestamp) {
-    lines.push(`- Generated: ${state.buildTimestamp}`);
+    lines.push(`**Generated:** ${state.buildTimestamp}`);
   }
   lines.push('');
+  lines.push('---');
+  lines.push('');
 
-  meta.datasources.forEach((datasource) => {
-    lines.push(`## Datasource: ${datasource.name}`);
-    lines.push('');
-    datasource.fields.forEach((field) => {
-      const base = `- ${field.name} (${field.datatype || 'n/a'})`;
-      if (field.is_calculated && field.calculation?.formula) {
-        lines.push(`${base} — calculated`);
-        lines.push('');
-        lines.push('```tableau');
-        lines.push(field.calculation.formula);
-        lines.push('```');
-        lines.push('');
-      } else {
-        lines.push(base);
-      }
+  // ===== TABLE OF CONTENTS =====
+  lines.push('## 📑 Table of Contents');
+  lines.push('');
+  lines.push('- [Summary](#summary)');
+  if (meta.datasources.length) {
+    lines.push('- [Datasources](#datasources)');
+    meta.datasources.forEach((ds, idx) => {
+      const anchor = slugify(ds.name);
+      lines.push(`  - [${ds.name}](#datasource-${idx + 1}-${anchor})`);
     });
-    lines.push('');
-  });
+  }
+  if (meta.parameters.length) {
+    lines.push('- [Parameters](#parameters)');
+  }
+  if (meta.worksheets.length) {
+    lines.push('- [Worksheets](#worksheets)');
+  }
+  if (meta.dashboards.length) {
+    lines.push('- [Dashboards](#dashboards)');
+  }
+  if (meta.lineage.field_to_field.length || meta.lineage.field_to_sheet.length) {
+    lines.push('- [Lineage & Dependencies](#lineage--dependencies)');
+  }
+  lines.push('');
+  lines.push('---');
+  lines.push('');
 
+  // ===== SUMMARY SECTION =====
+  lines.push('## Summary');
+  lines.push('');
+  lines.push('| Category | Count |');
+  lines.push('|----------|-------|');
+  lines.push(`| **Datasources** | ${stats.datasources} |`);
+  lines.push(`| **Total Fields** | ${stats.totalFields} |`);
+  lines.push(`| ↳ Regular Fields | ${stats.regularFields} |`);
+  lines.push(`| ↳ Calculated Fields | ${stats.calculatedFields} |`);
+  lines.push(`| ↳ LOD Calculations | ${stats.lodCalcs} |`);
+  lines.push(`| ↳ Table Calculations | ${stats.tableCalcs} |`);
+  lines.push(`| **Parameters** | ${stats.parameters} |`);
+  lines.push(`| **Worksheets** | ${stats.worksheets} |`);
+  lines.push(`| **Dashboards** | ${stats.dashboards} |`);
+  lines.push(`| **Dependencies** | ${stats.dependencies} |`);
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+
+  // ===== DATASOURCES =====
+  if (meta.datasources.length) {
+    lines.push('## Datasources');
+    lines.push('');
+
+    meta.datasources.forEach((datasource, dsIndex) => {
+      const anchor = slugify(datasource.name);
+      lines.push(`### Datasource ${dsIndex + 1}: ${datasource.name}`);
+      lines.push('');
+
+      // Connection details
+      if (datasource.connections && datasource.connections.length > 0) {
+        lines.push('#### 🔌 Connection Details');
+        lines.push('');
+        datasource.connections.forEach((conn, connIdx) => {
+          if (connIdx > 0) lines.push('');
+          if (conn.class) lines.push(`**Type:** ${conn.class}`);
+          if (conn.server) lines.push(`**Server:** ${conn.server}`);
+          if (conn.dbname) lines.push(`**Database:** ${conn.dbname}`);
+          if (conn.warehouse) lines.push(`**Warehouse:** ${conn.warehouse}`);
+        });
+        lines.push('');
+      }
+
+      // Separate regular fields and calculated fields
+      const regularFields = datasource.fields.filter(f => !f.is_calculated);
+      const calculatedFields = datasource.fields.filter(f => f.is_calculated);
+
+      // Regular Fields
+      if (regularFields.length > 0) {
+        lines.push(`#### 📊 Fields (${regularFields.length})`);
+        lines.push('');
+        lines.push('| Field Name | Datatype | Role | Aggregation |');
+        lines.push('|------------|----------|------|-------------|');
+
+        regularFields.forEach((field) => {
+          const name = field.name || 'Unnamed';
+          const datatype = field.datatype || 'n/a';
+          const role = field.role || 'n/a';
+          const agg = field.default_aggregation || 'n/a';
+          lines.push(`| ${name} | ${datatype} | ${role} | ${agg} |`);
+        });
+        lines.push('');
+      }
+
+      // Calculated Fields
+      if (calculatedFields.length > 0) {
+        lines.push(`#### 🧮 Calculated Fields (${calculatedFields.length})`);
+        lines.push('');
+
+        calculatedFields.forEach((field) => {
+          const name = field.name || 'Unnamed';
+          const datatype = field.datatype || 'n/a';
+          const formula = field.calculation?.formula || '';
+          const calcClass = field.calculation?.class || '';
+
+          // Detect badges
+          const badges = [];
+          const normalizedFormula = formula.toUpperCase();
+          if (normalizedFormula.match(/\{\s*(FIXED|INCLUDE|EXCLUDE)/)) {
+            badges.push('`LOD`');
+          }
+          if (normalizedFormula.match(/\b(WINDOW_|RUNNING_|LOOKUP|INDEX|RANK)\b/)) {
+            badges.push('`TABLE CALC`');
+          }
+          if (calcClass) {
+            badges.push(`\`${calcClass}\``);
+          }
+
+          const badgeStr = badges.length > 0 ? ' ' + badges.join(' ') : '';
+
+          lines.push(`##### ${name}${badgeStr}`);
+          lines.push('');
+          lines.push(`**Datatype:** ${datatype} | **Role:** ${field.role || 'n/a'}`);
+          lines.push('');
+
+          // Show dependencies
+          if (field.references) {
+            if (field.references.fields && field.references.fields.length > 0) {
+              lines.push(`**Referenced Fields:** ${field.references.fields.join(', ')}`);
+              lines.push('');
+            }
+            if (field.references.parameters && field.references.parameters.length > 0) {
+              lines.push(`**Referenced Parameters:** ${field.references.parameters.join(', ')}`);
+              lines.push('');
+            }
+          }
+
+          if (formula) {
+            lines.push('**Formula:**');
+            lines.push('```tableau');
+            lines.push(formula);
+            lines.push('```');
+            lines.push('');
+          }
+        });
+      }
+
+      lines.push('---');
+      lines.push('');
+    });
+  }
+
+  // ===== PARAMETERS =====
   if (meta.parameters.length) {
     lines.push('## Parameters');
     lines.push('');
+    lines.push('| Parameter Name | Datatype | Current Value |');
+    lines.push('|----------------|----------|---------------|');
+
     meta.parameters.forEach((param) => {
-      lines.push(`- ${param.name} (${param.datatype || 'n/a'}) default: ${param.current_value || '—'}`);
+      const name = param.name || 'Unnamed';
+      const datatype = param.datatype || 'n/a';
+      const value = param.current_value || '—';
+      lines.push(`| ${name} | ${datatype} | ${value} |`);
     });
+    lines.push('');
+    lines.push('---');
     lines.push('');
   }
 
+  // ===== WORKSHEETS =====
   if (meta.worksheets.length) {
     lines.push('## Worksheets');
     lines.push('');
+
     meta.worksheets.forEach((worksheet) => {
-      lines.push(`### ${worksheet.name}`);
+      const name = worksheet.name || 'Unnamed';
+      const fieldCount = (worksheet.fields_used || []).length;
+
+      lines.push(`### 📈 ${name}`);
       lines.push('');
-      (worksheet.fields_used || []).forEach((field) => {
-        lines.push(`- ${field}`);
-      });
+      lines.push(`**Fields Used:** ${fieldCount}`);
       lines.push('');
+
+      if (fieldCount > 0) {
+        lines.push('<details>');
+        lines.push('<summary>Show fields</summary>');
+        lines.push('');
+        (worksheet.fields_used || []).forEach((field) => {
+          lines.push(`- ${field}`);
+        });
+        lines.push('');
+        lines.push('</details>');
+        lines.push('');
+      }
     });
+
+    lines.push('---');
+    lines.push('');
   }
 
+  // ===== DASHBOARDS =====
   if (meta.dashboards.length) {
     lines.push('## Dashboards');
     lines.push('');
+
     meta.dashboards.forEach((dashboard) => {
-      lines.push(`### ${dashboard.name}`);
-      (dashboard.worksheets || []).forEach((ws) => {
-        lines.push(`- ${ws}`);
-      });
+      const name = dashboard.name || 'Unnamed';
+      const worksheetCount = (dashboard.worksheets || []).length;
+
+      lines.push(`### 📊 ${name}`);
       lines.push('');
+      lines.push(`**Worksheets:** ${worksheetCount}`);
+      lines.push('');
+
+      if (worksheetCount > 0) {
+        (dashboard.worksheets || []).forEach((ws) => {
+          lines.push(`- ${ws}`);
+        });
+        lines.push('');
+      }
     });
+
+    lines.push('---');
+    lines.push('');
   }
 
-  lines.push('## Lineage');
+  // ===== LINEAGE & DEPENDENCIES =====
+  if (meta.lineage.field_to_field.length || meta.lineage.field_to_sheet.length) {
+    lines.push('## Lineage & Dependencies');
+    lines.push('');
+
+    if (meta.lineage.field_to_field.length) {
+      lines.push('### Field → Field Dependencies');
+      lines.push('');
+      lines.push('```mermaid');
+      lines.push('graph LR');
+      meta.lineage.field_to_field.forEach(([from, to]) => {
+        const fromId = from.replace(/[^a-zA-Z0-9]/g, '_');
+        const toId = to.replace(/[^a-zA-Z0-9]/g, '_');
+        lines.push(`  ${fromId}["${from}"] --> ${toId}["${to}"]`);
+      });
+      lines.push('```');
+      lines.push('');
+
+      lines.push('<details>');
+      lines.push('<summary>Show as list</summary>');
+      lines.push('');
+      meta.lineage.field_to_field.forEach(([from, to]) => {
+        lines.push(`- ${from} → ${to}`);
+      });
+      lines.push('');
+      lines.push('</details>');
+      lines.push('');
+    }
+
+    if (meta.lineage.field_to_sheet.length) {
+      lines.push('### Field → Worksheet Dependencies');
+      lines.push('');
+      lines.push('<details>');
+      lines.push('<summary>Show dependencies</summary>');
+      lines.push('');
+      meta.lineage.field_to_sheet.forEach(([from, to]) => {
+        lines.push(`- ${from} → ${to}`);
+      });
+      lines.push('');
+      lines.push('</details>');
+      lines.push('');
+    }
+
+    lines.push('---');
+    lines.push('');
+  }
+
+  // Footer
   lines.push('');
-  lines.push('### Field → Field');
-  meta.lineage.field_to_field.forEach(([from, to]) => {
-    lines.push(`- ${from} → ${to}`);
-  });
-  lines.push('');
-  lines.push('### Field → Worksheet');
-  meta.lineage.field_to_sheet.forEach(([from, to]) => {
-    lines.push(`- ${from} → ${to}`);
-  });
+  lines.push('---');
+  lines.push(`*Documentation generated by Gem - Tableau Workbook Analyzer*`);
   lines.push('');
 
   return lines.join('\n');
+}
+
+/**
+ * Calculates summary statistics from metadata
+ * @param {Object} meta - Workbook metadata
+ * @returns {Object} Statistics object
+ * @private
+ */
+function calculateStats(meta) {
+  let totalFields = 0;
+  let regularFields = 0;
+  let calculatedFields = 0;
+  let lodCalcs = 0;
+  let tableCalcs = 0;
+
+  meta.datasources.forEach((ds) => {
+    ds.fields.forEach((field) => {
+      totalFields++;
+      if (field.is_calculated) {
+        calculatedFields++;
+        const formula = (field.calculation?.formula || '').toUpperCase();
+        if (formula.match(/\{\s*(FIXED|INCLUDE|EXCLUDE)/)) {
+          lodCalcs++;
+        }
+        if (formula.match(/\b(WINDOW_|RUNNING_|LOOKUP|INDEX|RANK)\b/)) {
+          tableCalcs++;
+        }
+      } else {
+        regularFields++;
+      }
+    });
+  });
+
+  return {
+    datasources: meta.datasources.length,
+    totalFields,
+    regularFields,
+    calculatedFields,
+    lodCalcs,
+    tableCalcs,
+    parameters: meta.parameters.length,
+    worksheets: meta.worksheets.length,
+    dashboards: meta.dashboards.length,
+    dependencies: meta.lineage.field_to_field.length + meta.lineage.field_to_sheet.length,
+  };
+}
+
+/**
+ * Converts text to URL-safe slug for anchor links
+ * @param {string} text - Text to slugify
+ * @returns {string} URL-safe slug
+ * @private
+ */
+function slugify(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 /**
