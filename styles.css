@@ -591,10 +591,12 @@ summary::-webkit-details-marker {
   background: var(--gem-surface);
   border: 1px solid var(--gem-border);
   border-radius: 10px;
-  padding: 10px;
-  max-height: 240px;
+  padding: 12px;
+  min-height: 60px;
+  max-height: 600px;
   overflow: auto;
-  line-height: 1.5;
+  line-height: 1.6;
+  font-size: 13px;
 }
 
 /* Formula syntax highlighting */
