@@ -11,6 +11,7 @@
 import { state } from './state.js';
 import { logger } from './logger.js';
 import { showError, setStatus } from './ui-handlers.js';
+import { displayName } from './utils.js';
 
 /**
  * Formats bytes to human-readable string
@@ -104,21 +105,61 @@ export function buildMarkdown(meta) {
 
     meta.datasources.forEach((datasource, dsIndex) => {
       const anchor = slugify(datasource.name);
-      lines.push(`### Datasource ${dsIndex + 1}: ${datasource.name}`);
+      const displayInfo = getDatasourceDisplayInfo(datasource);
+      lines.push(`### Datasource ${dsIndex + 1}: ${displayInfo}`);
       lines.push('');
+
+      // Show technical details if name was simplified
+      if (displayInfo !== datasource.name && datasource.rawId) {
+        lines.push(`<sup>*Technical ID: ${datasource.rawId}*</sup>`);
+        lines.push('');
+      }
 
       // Connection details
       if (datasource.connections && datasource.connections.length > 0) {
-        lines.push('#### 🔌 Connection Details');
-        lines.push('');
-        datasource.connections.forEach((conn, connIdx) => {
-          if (connIdx > 0) lines.push('');
-          if (conn.class) lines.push(`**Type:** ${conn.class}`);
-          if (conn.server) lines.push(`**Server:** ${conn.server}`);
-          if (conn.dbname) lines.push(`**Database:** ${conn.dbname}`);
-          if (conn.warehouse) lines.push(`**Warehouse:** ${conn.warehouse}`);
-        });
-        lines.push('');
+        const meaningfulConnections = datasource.connections.filter(conn =>
+          conn.server || conn.dbname || conn.warehouse ||
+          (conn.class && conn.class !== 'federated' && conn.class !== 'hyper')
+        );
+
+        if (meaningfulConnections.length > 0) {
+          lines.push('#### 🔌 Connection Details');
+          lines.push('');
+
+          meaningfulConnections.forEach((conn, connIdx) => {
+            if (connIdx > 0) {
+              lines.push('');
+              lines.push('**---**');
+              lines.push('');
+            }
+
+            // Show connection type if meaningful
+            if (conn.class && conn.class !== 'federated') {
+              lines.push(`**Connection Type:** ${conn.class}`);
+            }
+
+            // Show caption if available
+            if (conn.caption) {
+              lines.push(`**Name:** ${conn.caption}`);
+            }
+
+            // Server
+            if (conn.server) {
+              lines.push(`**Server:** ${conn.server}`);
+            }
+
+            // Database
+            if (conn.dbname) {
+              lines.push(`**Database:** ${conn.dbname}`);
+            }
+
+            // Warehouse (for cloud data warehouses)
+            if (conn.warehouse) {
+              lines.push(`**Warehouse:** ${conn.warehouse}`);
+            }
+          });
+          lines.push('');
+        }
       }
 
       // Separate regular fields and calculated fields
@@ -173,14 +214,16 @@ export function buildMarkdown(meta) {
           lines.push(`**Datatype:** ${datatype} | **Role:** ${field.role || 'n/a'}`);
           lines.push('');
 
-          // Show dependencies
+          // Show dependencies with resolved names
           if (field.references) {
             if (field.references.fields && field.references.fields.length > 0) {
-              lines.push(`**Referenced Fields:** ${field.references.fields.join(', ')}`);
+              const resolvedFields = field.references.fields.map(f => resolveFieldName(f));
+              lines.push(`**Referenced Fields:** ${resolvedFields.join(', ')}`);
               lines.push('');
             }
             if (field.references.parameters && field.references.parameters.length > 0) {
-              lines.push(`**Referenced Parameters:** ${field.references.parameters.join(', ')}`);
+              const resolvedParams = field.references.parameters.map(p => resolveFieldName(p));
+              lines.push(`**Referenced Parameters:** ${resolvedParams.join(', ')}`);
               lines.push('');
             }
           }
@@ -388,6 +431,90 @@ function slugify(text) {
     .replace(/[^\w\s-]/g, '')
     .replace(/[\s_-]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Resolves internal field ID to human-readable name
+ * Uses state.idToName map to translate Tableau internal IDs
+ * @param {string} rawId - Internal field ID (e.g., "Calculation_0906289039171594")
+ * @returns {string} Human-readable field name
+ * @private
+ */
+function resolveFieldName(rawId) {
+  if (!rawId) return 'Unknown';
+
+  // Remove brackets if present
+  const cleanId = rawId.replace(/^\[|\]$/g, '');
+
+  // Try to resolve using idToName map
+  if (state.idToName && state.idToName.has(cleanId)) {
+    return state.idToName.get(cleanId);
+  }
+
+  // Try with brackets
+  const bracketedId = `[${cleanId}]`;
+  if (state.idToName && state.idToName.has(bracketedId)) {
+    return state.idToName.get(bracketedId);
+  }
+
+  // If it's a Calculation_#### ID, try to find the actual field
+  if (cleanId.startsWith('Calculation_')) {
+    // Search through all nodes to find a match
+    if (state.nodeIndex) {
+      for (const [id, node] of state.nodeIndex) {
+        if (node.originalId === cleanId || node.rawId === cleanId || node.id === cleanId) {
+          return node.name || cleanId;
+        }
+      }
+    }
+  }
+
+  // Return the original if we can't resolve it
+  return cleanId;
+}
+
+/**
+ * Gets a meaningful datasource display name
+ * Extracts useful information from datasource and connections
+ * @param {Object} datasource - Datasource object
+ * @returns {string} Meaningful datasource description
+ * @private
+ */
+function getDatasourceDisplayInfo(datasource) {
+  const parts = [];
+
+  // Use caption if available
+  if (datasource.caption && datasource.caption !== datasource.rawId) {
+    return datasource.caption;
+  }
+
+  // Try to extract meaningful info from connections
+  if (datasource.connections && datasource.connections.length > 0) {
+    const conn = datasource.connections[0];
+
+    // For database connections, show database name
+    if (conn.dbname) {
+      parts.push(conn.dbname);
+    }
+
+    // For server connections, show server
+    if (conn.server && conn.server !== 'localhost' && conn.server !== '127.0.0.1') {
+      parts.push(conn.server);
+    }
+
+    // Add connection type if meaningful
+    if (conn.class && conn.class !== 'federated' && conn.class !== 'hyper') {
+      parts.push(`(${conn.class})`);
+    }
+  }
+
+  // If we found meaningful parts, return them
+  if (parts.length > 0) {
+    return parts.join(' - ');
+  }
+
+  // Fall back to the name
+  return datasource.name || datasource.rawId || 'Unknown Datasource';
 }
 
 /**
