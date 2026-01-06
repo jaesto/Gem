@@ -466,5 +466,19 @@ export function bindUI() {
     });
   }
 
+  // Bind sidebar tab switching
+  document.querySelectorAll('.tabs button').forEach((button) => {
+    button.addEventListener('click', () => {
+      document.querySelectorAll('.tabs button').forEach((b) => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach((panel) => panel.classList.remove('active'));
+      button.classList.add('active');
+      const targetId = button.dataset.tab;
+      const panel = document.getElementById(targetId);
+      if (panel) {
+        panel.classList.add('active');
+      }
+    });
+  });
+
   logger.info('[bindUI]', 'UI event handlers bound');
 }
