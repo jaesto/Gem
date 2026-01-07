@@ -6,11 +6,51 @@
  * - Keywords (IF, THEN, ELSE, CASE, etc.)
  * - Functions (SUM, AVG, FIXED, WINDOW_*, etc.)
  * - Operators, strings, numbers
- * - Field and parameter references
+ * - Field and parameter references (with ID resolution)
  * - Comments
  */
 
 import { escapeHtml } from './utils.js';
+import { state } from './state.js';
+
+/**
+ * Resolves internal field ID to human-readable name
+ * @param {string} rawId - Internal field ID
+ * @returns {string} Human-readable field name
+ * @private
+ */
+function resolveFieldId(rawId) {
+  if (!rawId) return rawId;
+
+  // Remove brackets
+  const cleanId = rawId.replace(/^\[|\]$/g, '');
+
+  // Try to resolve using idToName map
+  if (state.idToName && state.idToName.has(cleanId)) {
+    const resolved = state.idToName.get(cleanId);
+    return `[${resolved.replace(/^\[|\]$/g, '')}]`;
+  }
+
+  // Try with brackets
+  const bracketedId = `[${cleanId}]`;
+  if (state.idToName && state.idToName.has(bracketedId)) {
+    return state.idToName.get(bracketedId);
+  }
+
+  // If it's a Calculation_#### ID, try to find the actual field
+  if (cleanId.startsWith('Calculation_') || cleanId.startsWith('Parameter_')) {
+    if (state.nodeIndex) {
+      for (const [id, node] of state.nodeIndex) {
+        if (node.originalId === cleanId || node.rawId === cleanId || node.id === cleanId) {
+          return node.name || rawId;
+        }
+      }
+    }
+  }
+
+  // Return the original if we can't resolve it
+  return rawId;
+}
 
 /**
  * Applies syntax highlighting to a Tableau formula
@@ -24,6 +64,11 @@ import { escapeHtml } from './utils.js';
  */
 export function highlightFormula(formula) {
   if (!formula || typeof formula !== 'string') return '';
+
+  // First, resolve all field IDs to human-readable names
+  let resolvedFormula = formula.replace(/\[([^\[\]:]+)\]/g, (match, fieldId) => {
+    return resolveFieldId(match);
+  });
 
   // Tableau keywords (IF, THEN, ELSE, CASE, WHEN, END, etc.)
   const keywords = /\b(IF|THEN|ELSE|ELSEIF|END|CASE|WHEN|AND|OR|NOT|IN|IS|NULL|TRUE|FALSE)\b/gi;
@@ -49,8 +94,8 @@ export function highlightFormula(formula) {
   // Operators
   const operators = /([+\-*/%=<>!&|])/g;
 
-  // Escape HTML first
-  let highlighted = escapeHtml(formula);
+  // Escape HTML first (using resolved formula)
+  let highlighted = escapeHtml(resolvedFormula);
 
   // Apply highlighting in specific order to avoid conflicts
   // 1. Comments (must be first to not highlight within comments)
