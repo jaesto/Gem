@@ -592,11 +592,12 @@ summary::-webkit-details-marker {
   border: 1px solid var(--gem-border);
   border-radius: 10px;
   padding: 12px;
-  min-height: 60px;
-  max-height: 600px;
-  overflow: auto;
+  min-height: 80px;
+  max-height: none;
+  overflow-y: auto;
   line-height: 1.6;
   font-size: 13px;
+  flex-shrink: 0;
 }
 
 /* Formula syntax highlighting */

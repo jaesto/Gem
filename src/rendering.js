@@ -17,6 +17,41 @@ import { highlightFormula } from './syntax-highlighter.js';
 import { createVirtualList } from './virtual-list.js';
 
 /**
+ * Cleans up datasource names to be more human-readable
+ * Converts hyper file paths and federated IDs to friendly names
+ * @param {string} datasourceName - Raw datasource name
+ * @returns {string} Cleaned datasource name
+ * @private
+ */
+function cleanDatasourceName(datasourceName) {
+  if (!datasourceName) return 'Unknown';
+
+  // Handle hyper extract file paths
+  if (datasourceName.includes('.hyper')) {
+    // Extract from paths like "Data/Extracts/federated_XXX.hyper"
+    const fileName = datasourceName.split('/').pop();
+    if (fileName.startsWith('federated_')) {
+      return 'Local Extract (Hyper)';
+    }
+    // Remove .hyper extension and path
+    return fileName.replace('.hyper', '') + ' (Hyper)';
+  }
+
+  // Handle federated datasources
+  if (datasourceName.startsWith('federated_')) {
+    return 'Federated Data';
+  }
+
+  // Handle textscan (CSV/Excel)
+  if (datasourceName === 'textscan') {
+    return 'Text/Excel File';
+  }
+
+  // Return as-is if already readable
+  return datasourceName;
+}
+
+/**
  * Resolves an entity (field, parameter, etc.) from a raw ID or name
  * Looks up friendly names, types, and datasources from lookup maps
  *
@@ -115,8 +150,10 @@ export function renderDetails(nodeData) {
   lines.push(`<h2${headingTitle}>${escapeHtml(nodeData.name)}</h2>`);
   const infoBits = [escapeHtml(nodeData.type)];
   if (nodeData.datasource) {
-    const dsTitle = nodeData.datasourceId ? ` title="${escapeHtml(nodeData.datasourceId)}"` : '';
-    infoBits.push(`Datasource: <span${dsTitle}>${escapeHtml(nodeData.datasource)}</span>`);
+    const cleanedDs = cleanDatasourceName(nodeData.datasource);
+    const rawDs = nodeData.datasource !== cleanedDs ? nodeData.datasource : nodeData.datasourceId;
+    const dsTitle = rawDs ? ` title="${escapeHtml(rawDs)}"` : '';
+    infoBits.push(`Datasource: <span${dsTitle}>${escapeHtml(cleanedDs)}</span>`);
   }
   if (nodeData.datatype) infoBits.push(`Type: ${escapeHtml(nodeData.datatype)}`);
   lines.push(`<p class="detail-type">${infoBits.join(' • ')}</p>`);
