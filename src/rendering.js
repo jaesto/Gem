@@ -176,8 +176,20 @@ export function renderDetails(nodeData) {
         normalizedFormula.includes('WINDOW_') ||
         normalizedFormula.includes('RUNNING_'),
     };
-    lines.push('<h3 class="formula-heading">Formula</h3>');
-    lines.push('<pre class="formula"></pre>');
+
+    // Build formula section with syntax highlighting directly
+    lines.push('<h3 class="formula-heading">Formula');
+    if (formulaInfo.hasLODBadge) {
+      lines.push(' <span class="chip chip-lod">LOD</span>');
+    }
+    if (formulaInfo.hasTableCalcBadge) {
+      lines.push(' <span class="chip chip-table">Table Calc</span>');
+    }
+    lines.push('</h3>');
+    lines.push('<pre class="formula">');
+    lines.push(highlightFormula(formulaInfo.text));
+    lines.push('</pre>');
+
     const flags = [];
     if (nodeData.isLOD) flags.push('LOD');
     if (nodeData.isTableCalc) flags.push('Table Calc');
@@ -237,31 +249,6 @@ export function renderDetails(nodeData) {
   }
 
   panel.innerHTML = lines.join('');
-
-  // Render formulas with syntax highlighting.
-  // Chip detection leans on brace/keyword heuristics (plus the node flags) to highlight LOD and Table Calc formulas.
-  if (formulaInfo) {
-    const formulaEl = panel.querySelector('.formula');
-    if (formulaEl) {
-      // Apply syntax highlighting to the formula
-      formulaEl.innerHTML = highlightFormula(formulaInfo.text);
-    }
-    const headingEl = panel.querySelector('.formula-heading');
-    if (headingEl) {
-      if (formulaInfo.hasLODBadge) {
-        const lodChip = document.createElement('span');
-        lodChip.className = 'chip chip-lod';
-        lodChip.textContent = 'LOD';
-        headingEl.appendChild(lodChip);
-      }
-      if (formulaInfo.hasTableCalcBadge) {
-        const tableChip = document.createElement('span');
-        tableChip.className = 'chip chip-table';
-        tableChip.textContent = 'Table Calc';
-        headingEl.appendChild(tableChip);
-      }
-    }
-  }
 }
 
 /**
