@@ -17,6 +17,51 @@ import { logger } from './logger.js';
 import { clampHop, memoize, announce } from './utils.js';
 
 /**
+ * Filters the graph to show only nodes connected to a specific dashboard
+ * Used when user clicks a dashboard in the sidebar filter list
+ *
+ * @param {string} dashboardId - Cytoscape node ID of the dashboard
+ */
+export function filterByDashboard(dashboardId) {
+  if (!state.cy) return;
+
+  const dashNode = state.cy.getElementById(dashboardId);
+  if (!dashNode || !dashNode.length) {
+    logger.warn('[filterByDashboard]', 'Dashboard node not found:', dashboardId);
+    return;
+  }
+
+  // Expand from dashboard node through the full reachable subgraph
+  let expanded = dashNode.closedNeighborhood();
+  let prevSize = -1;
+  let iterations = 0;
+  while (expanded.length !== prevSize && iterations < 20) {
+    prevSize = expanded.length;
+    expanded = expanded.union(expanded.closedNeighborhood());
+    iterations++;
+  }
+
+  state.cy.batch(() => {
+    state.cy.elements().hide();
+    expanded.show();
+  });
+
+  fitAll(80);
+  logger.info('[filterByDashboard]', `Showing ${expanded.length} elements for dashboard ${dashboardId}`);
+}
+
+/**
+ * Clears the dashboard filter and restores all visible nodes
+ * (respecting the current type/datatype filters)
+ */
+export function clearDashboardFilter() {
+  if (!state.cy) return;
+  state.cy.elements().show();
+  applyFilters({ rerunLayout: false });
+  fitAll(80);
+}
+
+/**
  * Fits viewport to all visible elements
  * @param {number} pad - Padding around elements
  */

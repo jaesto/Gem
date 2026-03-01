@@ -86,8 +86,8 @@ export const state = {
   fileInfo: null,
   buildTimestamp: new Date().toISOString(),
   selectedNodeId: null,
+  selectedDashboard: null,
   lastFocusDepth: 1,
-  hops: HOP_MIN,
 
   // Lifecycle management
   graphResizeObserver: null,
