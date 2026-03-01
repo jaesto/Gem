@@ -12,7 +12,7 @@
  * - Export functions
  */
 
-import { MAX_FILE_SIZE, WARN_FILE_SIZE, HOP_MIN } from './constants.js';
+import { MAX_FILE_SIZE, WARN_FILE_SIZE } from './constants.js';
 import { state } from './state.js';
 import { logger } from './logger.js';
 import { announce, getEl, debounce, normalizeName } from './utils.js';
@@ -20,7 +20,7 @@ import { parseTwbx, parseTwb, parseTwbText } from './parsers.js';
 import { buildGraph, normalizeGraph, syncGraphLookups } from './graph-builder.js';
 import { applyCyTheme } from './cytoscape-config.js';
 import { setLayoutButton } from './layouts.js';
-import { applyFilters, fitAll, syncHopControl, focusOnNode } from './filters.js';
+import { applyFilters, fitAll, focusOnNode, filterByDashboard, clearDashboardFilter } from './filters.js';
 import { renderDetails, syncListSelection, populateLists } from './rendering.js';
 
 /**
@@ -205,8 +205,6 @@ export function drawGraph(graph) {
   syncListSelection(null);
   state.selectedNodeId = null;
   state.lastFocusDepth = 1;
-  state.hops = HOP_MIN;
-  syncHopControl(state.hops);
 
   applyFilters({ rerunLayout: false });
 
@@ -354,7 +352,11 @@ export async function handleFiles(fileList) {
     state.graph = graph;
     syncGraphLookups(graph);
 
-    populateLists(parsed, { focusOnNode: (id, opts) => focusOnNode(id, opts, { renderDetails, syncListSelection }) });
+    populateLists(parsed, {
+      focusOnNode: (id, opts) => focusOnNode(id, opts, { renderDetails, syncListSelection }),
+      filterByDashboard,
+      clearDashboardFilter,
+    });
     drawGraph(graph);
     fitAll();
 

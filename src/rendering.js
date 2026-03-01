@@ -9,7 +9,7 @@
  * - Syntax highlighted formulas
  */
 
-import { NAME_NORMALIZER, VIRTUAL_SCROLL_THRESHOLD } from './constants.js';
+import { NAME_NORMALIZER } from './constants.js';
 import { state } from './state.js';
 import { logger } from './logger.js';
 import { escapeHtml, displayName, normalizeName } from './utils.js';
@@ -294,40 +294,30 @@ export function createListItem(label, nodeId, dependencies = {}) {
  * @param {string|null} nodeId - Node ID to highlight or null to clear
  */
 export function syncListSelection(nodeId) {
-  document.querySelectorAll('.tab-panel button[data-node-id]').forEach((button) => {
+  document.querySelectorAll('.sidebar-section button[data-node-id]').forEach((button) => {
     button.classList.toggle('active', button.dataset.nodeId === nodeId);
   });
 }
 
 /**
- * Populates sidebar lists for nodes, sheets, calculations, and parameters
+ * Populates sidebar lists for dashboards and sheets
  * Also refreshes the datalist used by the search box
- * Uses virtual scrolling for large lists to improve performance
  *
  * @param {Object} meta - Parsed metadata object
  * @param {Object} dependencies - External function dependencies
  * @param {Function} dependencies.focusOnNode - Function to focus on node
  */
 export function populateLists(meta, dependencies = {}) {
-  const nodesList = document.getElementById('list-nodes');
+  const dashboardsList = document.getElementById('list-dashboards');
   const sheetsList = document.getElementById('list-sheets');
-  const calcsList = document.getElementById('list-calcs');
-  const paramsList = document.getElementById('list-params');
+  const clearBtn = document.getElementById('clearDashboardFilter');
   const datalist = document.getElementById('node-names');
 
-  // Validate all required elements exist
-  if (!nodesList || !sheetsList || !calcsList || !paramsList || !datalist) {
-    logger.warn('[populateLists]', 'Missing required DOM elements:', {
-      nodesList: !!nodesList,
-      sheetsList: !!sheetsList,
-      calcsList: !!calcsList,
-      paramsList: !!paramsList,
-      datalist: !!datalist,
-    });
+  if (!dashboardsList || !sheetsList || !datalist) {
+    logger.warn('[populateLists]', 'Missing required DOM elements');
     return;
   }
 
-  // Validate meta and graph exist
   if (!meta || !state.graph) {
     logger.warn('[populateLists]', 'Invalid metadata or graph');
     return;
@@ -337,62 +327,82 @@ export function populateLists(meta, dependencies = {}) {
   state.virtualLists.forEach((cleanup) => cleanup());
   state.virtualLists.clear();
 
-  nodesList.innerHTML = '';
+  dashboardsList.innerHTML = '';
   sheetsList.innerHTML = '';
-  calcsList.innerHTML = '';
-  paramsList.innerHTML = '';
   datalist.innerHTML = '';
 
-  // Prepare node data
-  const sortedNodes = [...(state.graph?.nodes || [])]
-    .filter((node) => node && node.name && node.id && node.type)
-    .sort((a, b) => {
-      if (a.type === b.type) {
-        return a.name.localeCompare(b.name);
-      }
-      return a.type.localeCompare(b.type);
+  // Build dashboard list - clicking filters graph to that dashboard
+  const dashboardData = (meta.dashboards || [])
+    .filter((db) => db && db.name)
+    .map((db) => {
+      const nodes = (state.graph?.nodes || []).filter(
+        (n) => n && n.type === 'Dashboard' && n.name === db.name
+      );
+      return { name: db.name, nodeId: nodes.length ? nodes[0].id : null };
     });
 
+  dashboardData.forEach((db) => {
+    const li = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = db.name;
+    button.className = 'dashboard-filter-btn';
+    if (db.nodeId) {
+      button.dataset.nodeId = db.nodeId;
+      button.dataset.dashboardName = db.name;
+      button.addEventListener('click', () => {
+        // Toggle selection
+        const isActive = button.classList.contains('active');
+        dashboardsList.querySelectorAll('.dashboard-filter-btn').forEach((b) =>
+          b.classList.remove('active')
+        );
+        if (isActive) {
+          // Deselect - clear filter
+          state.selectedDashboard = null;
+          if (clearBtn) clearBtn.style.display = 'none';
+          if (dependencies.clearDashboardFilter) dependencies.clearDashboardFilter();
+        } else {
+          button.classList.add('active');
+          state.selectedDashboard = db.name;
+          if (clearBtn) clearBtn.style.display = '';
+          if (dependencies.filterByDashboard) dependencies.filterByDashboard(db.nodeId);
+        }
+      });
+    } else {
+      button.disabled = true;
+    }
+    li.appendChild(button);
+    dashboardsList.appendChild(li);
+  });
+
+  // Wire up "Show all" button
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      state.selectedDashboard = null;
+      dashboardsList.querySelectorAll('.dashboard-filter-btn').forEach((b) =>
+        b.classList.remove('active')
+      );
+      clearBtn.style.display = 'none';
+      if (dependencies.clearDashboardFilter) dependencies.clearDashboardFilter();
+    });
+  }
+
+  // Build sheets list
   const worksheetData = (meta.worksheets || [])
-    .filter((worksheet) => worksheet && worksheet.name)
-    .map((worksheet) => {
-      const worksheetIds = state.graph?.nodes.filter(
-        (node) => node && node.type === 'Worksheet' && node.rawName === worksheet.name
-      ) || [];
-      const nodeId = worksheetIds.length ? worksheetIds[0].id : null;
-      return { name: worksheet.name, nodeId };
+    .filter((ws) => ws && ws.name)
+    .map((ws) => {
+      const nodes = (state.graph?.nodes || []).filter(
+        (n) => n && n.type === 'Worksheet' && n.rawName === ws.name
+      );
+      return { name: ws.name, nodeId: nodes.length ? nodes[0].id : null };
     });
-
-  const calcData = (state.graph?.nodes || [])
-    .filter((node) => node && node.type === 'CalculatedField' && node.name && node.id)
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  const paramData = (state.graph?.nodes || [])
-    .filter((node) => node && node.type === 'Parameter' && node.name && node.id)
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  // Performance: Use virtual scrolling for large lists (>100 items)
-  const nodesCleanup = createVirtualList(nodesList, sortedNodes, (node) =>
-    createListItem(`${node.name} · ${node.type}`, node.id, dependencies)
-  );
-  state.virtualLists.set('nodes', nodesCleanup);
 
   const sheetsCleanup = createVirtualList(sheetsList, worksheetData, (item) =>
     createListItem(item.name, item.nodeId, dependencies)
   );
   state.virtualLists.set('sheets', sheetsCleanup);
 
-  const calcsCleanup = createVirtualList(calcsList, calcData, (node) =>
-    createListItem(node.name, node.id, dependencies)
-  );
-  state.virtualLists.set('calcs', calcsCleanup);
-
-  const paramsCleanup = createVirtualList(paramsList, paramData, (node) =>
-    createListItem(node.name, node.id, dependencies)
-  );
-  state.virtualLists.set('params', paramsCleanup);
-
-  // Populate search datalist (not virtualized - browser handles this)
+  // Populate search datalist
   const seenValues = new Set();
   (state.graph?.nodes || []).forEach((node) => {
     if (node && node.name && !seenValues.has(node.name)) {
@@ -403,9 +413,5 @@ export function populateLists(meta, dependencies = {}) {
     }
   });
 
-  // Performance: Log if virtual scrolling was used
-  const totalNodes = sortedNodes.length;
-  if (totalNodes > VIRTUAL_SCROLL_THRESHOLD) {
-    logger.info('[populateLists]', `Virtual scrolling enabled for ${totalNodes} nodes`);
-  }
+  logger.info('[populateLists]', `Listed ${dashboardData.length} dashboards, ${worksheetData.length} sheets`);
 }

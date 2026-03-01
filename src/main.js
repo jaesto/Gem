@@ -11,7 +11,7 @@ import { logger } from './logger.js';
 import { debounce } from './utils.js';
 import { bootGraph, applyCyTheme } from './cytoscape-config.js';
 import { runForceLayout, runGridLayout, runHierarchyLayout, runCenteredHierarchyLayout, runCenteredFromSelectionLayout } from './layouts.js';
-import { applyFilters, syncHopControl, expandNeighbors, focusOnNode, setIsolatedMode } from './filters.js';
+import { applyFilters, focusOnNode, setIsolatedMode, filterByDashboard, clearDashboardFilter } from './filters.js';
 import { renderDetails, syncListSelection } from './rendering.js';
 import { bindUI, setStatus, showError } from './ui-handlers.js';
 import { undoLayout, redoLayout } from './history.js';
@@ -176,59 +176,6 @@ function bindLayoutMenu() {
 }
 
 /**
- * Binds hop menu for neighborhood expansion
- * @private
- */
-function bindHopMenu() {
-  const dropdown = document.getElementById('hopDropdown');
-  const btn = document.getElementById('hopBtn');
-  const menu = document.getElementById('hopMenu');
-  if (!btn || !menu) return;
-
-  const close = () => {
-    menu.classList.remove('open');
-    if (dropdown) dropdown.classList.remove('open');
-    btn.setAttribute('aria-expanded', 'false');
-  };
-
-  const open = () => {
-    menu.classList.add('open');
-    if (dropdown) dropdown.classList.add('open');
-    btn.setAttribute('aria-expanded', 'true');
-  };
-
-  btn.setAttribute('aria-haspopup', 'menu');
-  btn.setAttribute('aria-expanded', 'false');
-
-  btn.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (menu.classList.contains('open')) {
-      close();
-    } else {
-      open();
-    }
-  });
-
-  menu.addEventListener('click', (event) => {
-    const item = event.target.closest('[data-hop]');
-    if (!item) return;
-    const hops = parseInt(item.dataset.hop, 10);
-    if (Number.isFinite(hops)) {
-      const dependencies = { focusOnNode: (id, opts) => focusOnNode(id, opts, { renderDetails, syncListSelection }), setStatus };
-      expandNeighbors(hops, dependencies);
-    }
-    close();
-  });
-
-  document.addEventListener('click', (event) => {
-    if (event.target === btn) return;
-    if (menu.contains(event.target)) return;
-    close();
-  });
-}
-
-/**
  * Binds isolated nodes menu
  * @private
  */
@@ -337,7 +284,6 @@ function initialize() {
 
     // Setup menus and controls
     bindLayoutMenu();
-    bindHopMenu();
     bindIsolatedMenu();
     bindFilters();
 

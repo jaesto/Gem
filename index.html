@@ -63,17 +63,6 @@
             <button class="menu-item" data-layout="centered-selection" role="menuitem">Centered from selection</button>
           </div>
         </div>
-        <label for="hopBtn" class="visually-hidden">Expand neighbors hops</label>
-        <div class="dropdown" id="hopDropdown">
-          <button id="hopBtn" class="btn" type="button" title="Choose neighbor expansion">Hops ▾</button>
-          <div id="hopMenu" class="menu" role="menu" aria-label="Hop menu">
-            <button class="menu-item" data-hop="1" role="menuitem">1 hop</button>
-            <button class="menu-item" data-hop="2" role="menuitem">2 hops</button>
-            <button class="menu-item" data-hop="3" role="menuitem">3 hops</button>
-            <button class="menu-item" data-hop="4" role="menuitem">4 hops</button>
-            <button class="menu-item" data-hop="5" role="menuitem">5 hops</button>
-          </div>
-        </div>
         <div class="dropdown" id="isolatedDropdown">
           <button
             id="isolatedBtn"
@@ -133,24 +122,16 @@
           <p>Drop a Tableau .twb or .twbx file here<br />or click Open Workbook.</p>
         </section>
         <!-- Sidebar tabs allow switching between node, sheet, calc, and parameter lists -->
-        <nav class="tabs" aria-label="Sidebar tabs">
-          <button type="button" data-tab="panel-nodes" class="tab active">Nodes</button>
-          <button type="button" data-tab="panel-sheets" class="tab">Sheets</button>
-          <button type="button" data-tab="panel-calcs" class="tab">Calcs</button>
-          <button type="button" data-tab="panel-params" class="tab">Params</button>
-        </nav>
-        <section id="panel-nodes" class="tab-panel active" aria-live="polite">
-          <ul id="list-nodes"></ul>
-        </section>
-        <section id="panel-sheets" class="tab-panel" aria-live="polite">
-          <ul id="list-sheets"></ul>
-        </section>
-        <section id="panel-calcs" class="tab-panel" aria-live="polite">
-          <ul id="list-calcs"></ul>
-        </section>
-        <section id="panel-params" class="tab-panel" aria-live="polite">
-          <ul id="list-params"></ul>
-        </section>
+        <div class="sidebar-section">
+          <p class="sidebar-label">Dashboards</p>
+          <p class="sidebar-hint">Click to filter graph and export</p>
+          <ul id="list-dashboards" aria-label="Dashboard filter list"></ul>
+          <button id="clearDashboardFilter" class="btn btn-sm" type="button" style="display:none">Show all</button>
+        </div>
+        <div class="sidebar-section">
+          <p class="sidebar-label">Sheets</p>
+          <ul id="list-sheets" aria-label="Sheet list"></ul>
+        </div>
       </aside>
 
       <!-- Cytoscape graph container and status overlay -->

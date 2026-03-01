@@ -28,409 +28,220 @@ function formatBytes(bytes) {
 }
 
 /**
- * Builds Markdown documentation from workbook metadata
+ * Builds Markdown documentation from workbook metadata.
+ * Format: Dashboard → Sheet → Calculations table.
+ * If state.selectedDashboard is set, only that dashboard is exported.
+ *
  * @param {Object} meta - Workbook metadata
  * @returns {string} Markdown text
  */
 export function buildMarkdown(meta) {
   const lines = [];
+  const selectedDashboard = state.selectedDashboard || null;
 
-  // Calculate summary statistics
-  const stats = calculateStats(meta);
+  // Build a field-name lookup from datasources for resolving formulas
+  const fieldByName = buildFieldLookup(meta);
+
+  // Determine which dashboards to export
+  const dashboardsToExport = selectedDashboard
+    ? (meta.dashboards || []).filter((db) => db.name === selectedDashboard)
+    : (meta.dashboards || []);
+
+  // Build a worksheet lookup by name
+  const worksheetByName = {};
+  (meta.worksheets || []).forEach((ws) => {
+    worksheetByName[ws.name] = ws;
+  });
 
   // ===== HEADER =====
-  lines.push('# Tableau Workbook Documentation');
+  const workbookName = (meta.workbook_path || 'Workbook').split('/').pop().split('\\').pop();
+  lines.push(`# ${workbookName}`);
   lines.push('');
-  lines.push(`**Source:** ${meta.workbook_path}`);
+  if (selectedDashboard) {
+    lines.push(`> Scoped to dashboard: **${selectedDashboard}**`);
+    lines.push('');
+  }
   if (state.fileInfo) {
-    lines.push(`**File size:** ${formatBytes(state.fileInfo.size)}`);
+    lines.push(`**File:** ${meta.workbook_path}  `);
+    lines.push(`**Size:** ${formatBytes(state.fileInfo.size)}  `);
   }
-  if (state.buildTimestamp) {
-    lines.push(`**Generated:** ${state.buildTimestamp}`);
-  }
+  lines.push(`**Generated:** ${new Date().toLocaleString()}`);
   lines.push('');
   lines.push('---');
   lines.push('');
 
-  // ===== TABLE OF CONTENTS =====
-  lines.push('## 📑 Table of Contents');
-  lines.push('');
-  lines.push('- [Summary](#summary)');
-  if (meta.datasources.length) {
-    lines.push('- [Datasources](#datasources)');
-    meta.datasources.forEach((ds, idx) => {
-      const anchor = slugify(ds.name);
-      lines.push(`  - [${ds.name}](#datasource-${idx + 1}-${anchor})`);
-    });
+  // ===== DASHBOARDS =====
+  if (dashboardsToExport.length === 0) {
+    lines.push('*No dashboards found in this workbook.*');
+    lines.push('');
   }
-  if (meta.parameters.length) {
-    lines.push('- [Parameters](#parameters)');
-  }
-  if (meta.worksheets.length) {
-    lines.push('- [Worksheets](#worksheets)');
-  }
-  if (meta.dashboards.length) {
-    lines.push('- [Dashboards](#dashboards)');
-  }
-  if (meta.lineage.field_to_field.length || meta.lineage.field_to_sheet.length) {
-    lines.push('- [Lineage & Dependencies](#lineage--dependencies)');
-  }
-  lines.push('');
-  lines.push('---');
-  lines.push('');
 
-  // ===== SUMMARY SECTION =====
-  lines.push('## Summary');
-  lines.push('');
-  lines.push('| Category | Count |');
-  lines.push('|----------|-------|');
-  lines.push(`| **Datasources** | ${stats.datasources} |`);
-  lines.push(`| **Total Fields** | ${stats.totalFields} |`);
-  lines.push(`| ↳ Regular Fields | ${stats.regularFields} |`);
-  lines.push(`| ↳ Calculated Fields | ${stats.calculatedFields} |`);
-  lines.push(`| ↳ LOD Calculations | ${stats.lodCalcs} |`);
-  lines.push(`| ↳ Table Calculations | ${stats.tableCalcs} |`);
-  lines.push(`| **Parameters** | ${stats.parameters} |`);
-  lines.push(`| **Worksheets** | ${stats.worksheets} |`);
-  lines.push(`| **Dashboards** | ${stats.dashboards} |`);
-  lines.push(`| **Dependencies** | ${stats.dependencies} |`);
-  lines.push('');
-  lines.push('---');
-  lines.push('');
-
-  // ===== DATASOURCES =====
-  if (meta.datasources.length) {
-    lines.push('## Datasources');
+  dashboardsToExport.forEach((dashboard) => {
+    const dbName = dashboard.name || 'Unnamed Dashboard';
+    lines.push(`# Dashboard: ${dbName}`);
     lines.push('');
 
-    meta.datasources.forEach((datasource, dsIndex) => {
-      const anchor = slugify(datasource.name);
-      const displayInfo = getDatasourceDisplayInfo(datasource);
-      lines.push(`### Datasource ${dsIndex + 1}: ${displayInfo}`);
+    const dbWorksheets = (dashboard.worksheets || []);
+    if (dbWorksheets.length === 0) {
+      lines.push('*No sheets in this dashboard.*');
+      lines.push('');
+    }
+
+    dbWorksheets.forEach((wsName) => {
+      const ws = worksheetByName[wsName];
+      lines.push(`## Sheet: ${wsName}`);
       lines.push('');
 
-      // Show technical details if name was simplified
-      if (displayInfo !== datasource.name && datasource.rawId) {
-        lines.push(`<sup>*Technical ID: ${datasource.rawId}*</sup>`);
+      if (!ws || !ws.fields_used || ws.fields_used.length === 0) {
+        lines.push('*No fields recorded for this sheet.*');
         lines.push('');
+        return;
       }
 
-      // Connection details
-      if (datasource.connections && datasource.connections.length > 0) {
-        const meaningfulConnections = datasource.connections.filter(conn =>
-          conn.server || conn.dbname || conn.warehouse ||
-          (conn.class && conn.class !== 'federated' && conn.class !== 'hyper')
-        );
+      // Build rows for each field used in this sheet
+      const rows = ws.fields_used.map((rawFieldName) => {
+        const cleanName = rawFieldName.replace(/^\[|\]$/g, '');
+        const resolvedName = resolveFieldName(cleanName) || cleanName;
+        const field = fieldByName[resolvedName] || fieldByName[cleanName];
 
-        if (meaningfulConnections.length > 0) {
-          lines.push('#### 🔌 Connection Details');
-          lines.push('');
-
-          meaningfulConnections.forEach((conn, connIdx) => {
-            if (connIdx > 0) {
-              lines.push('');
-              lines.push('**---**');
-              lines.push('');
-            }
-
-            // Show connection type if meaningful
-            if (conn.class && conn.class !== 'federated') {
-              lines.push(`**Connection Type:** ${conn.class}`);
-            }
-
-            // Show caption if available
-            if (conn.caption) {
-              lines.push(`**Name:** ${conn.caption}`);
-            }
-
-            // Server
-            if (conn.server) {
-              lines.push(`**Server:** ${conn.server}`);
-            }
-
-            // Database
-            if (conn.dbname) {
-              lines.push(`**Database:** ${conn.dbname}`);
-            }
-
-            // Warehouse (for cloud data warehouses)
-            if (conn.warehouse) {
-              lines.push(`**Warehouse:** ${conn.warehouse}`);
-            }
-          });
-          lines.push('');
+        if (field && field.is_calculated) {
+          const formula = (field.calculation?.formula || '').trim();
+          const resolvedFormula = resolveFormulaNamesInText(formula);
+          const flags = calcFlags(formula);
+          return {
+            name: resolvedName,
+            type: 'Calculated Field',
+            flags,
+            formula: resolvedFormula,
+          };
         }
-      }
 
-      // Separate regular fields and calculated fields
-      const regularFields = datasource.fields.filter(f => !f.is_calculated);
-      const calculatedFields = datasource.fields.filter(f => f.is_calculated);
+        return {
+          name: resolvedName,
+          type: 'Field',
+          flags: '',
+          formula: '',
+        };
+      });
 
-      // Regular Fields
-      if (regularFields.length > 0) {
-        lines.push(`#### 📊 Fields (${regularFields.length})`);
+      // Table: Field | Type | Flags | Formula
+      lines.push('| Field | Type | Notes | Formula |');
+      lines.push('|-------|------|-------|---------|');
+      rows.forEach(({ name, type, flags, formula }) => {
+        const escapedName = name.replace(/\|/g, '\\|');
+        const escapedFormula = formula ? formula.replace(/\n/g, ' ').replace(/\|/g, '\\|') : '';
+        lines.push(`| ${escapedName} | ${type} | ${flags} | ${escapedFormula} |`);
+      });
+      lines.push('');
+    });
+
+    lines.push('---');
+    lines.push('');
+  });
+
+  // ===== SHEETS NOT IN ANY DASHBOARD (when exporting all) =====
+  if (!selectedDashboard) {
+    const sheetsInDashboards = new Set(
+      (meta.dashboards || []).flatMap((db) => db.worksheets || [])
+    );
+    const orphanSheets = (meta.worksheets || []).filter(
+      (ws) => ws && ws.name && !sheetsInDashboards.has(ws.name)
+    );
+
+    if (orphanSheets.length > 0) {
+      lines.push('# Sheets (not in any dashboard)');
+      lines.push('');
+
+      orphanSheets.forEach((ws) => {
+        lines.push(`## Sheet: ${ws.name}`);
         lines.push('');
-        lines.push('| Field Name | Datatype | Role | Aggregation |');
-        lines.push('|------------|----------|------|-------------|');
 
-        regularFields.forEach((field) => {
-          const name = field.name || 'Unnamed';
-          const datatype = field.datatype || 'n/a';
-          const role = field.role || 'n/a';
-          const agg = field.default_aggregation || 'n/a';
-          lines.push(`| ${name} | ${datatype} | ${role} | ${agg} |`);
+        if (!ws.fields_used || ws.fields_used.length === 0) {
+          lines.push('*No fields recorded for this sheet.*');
+          lines.push('');
+          return;
+        }
+
+        lines.push('| Field | Type | Notes | Formula |');
+        lines.push('|-------|------|-------|---------|');
+        ws.fields_used.forEach((rawFieldName) => {
+          const cleanName = rawFieldName.replace(/^\[|\]$/g, '');
+          const resolvedName = resolveFieldName(cleanName) || cleanName;
+          const field = fieldByName[resolvedName] || fieldByName[cleanName];
+
+          if (field && field.is_calculated) {
+            const formula = (field.calculation?.formula || '').trim();
+            const resolvedFormula = resolveFormulaNamesInText(formula);
+            const flags = calcFlags(formula);
+            const escapedName = resolvedName.replace(/\|/g, '\\|');
+            const escapedFormula = resolvedFormula.replace(/\n/g, ' ').replace(/\|/g, '\\|');
+            lines.push(`| ${escapedName} | Calculated Field | ${flags} | ${escapedFormula} |`);
+          } else {
+            const escapedName = resolvedName.replace(/\|/g, '\\|');
+            lines.push(`| ${escapedName} | Field | | |`);
+          }
         });
         lines.push('');
-      }
-
-      // Calculated Fields
-      if (calculatedFields.length > 0) {
-        lines.push(`#### 🧮 Calculated Fields (${calculatedFields.length})`);
-        lines.push('');
-
-        calculatedFields.forEach((field) => {
-          const name = field.name || 'Unnamed';
-          const datatype = field.datatype || 'n/a';
-          const formula = field.calculation?.formula || '';
-          const calcClass = field.calculation?.class || '';
-
-          // Detect badges
-          const badges = [];
-          const normalizedFormula = formula.toUpperCase();
-          if (normalizedFormula.match(/\{\s*(FIXED|INCLUDE|EXCLUDE)/)) {
-            badges.push('`LOD`');
-          }
-          if (normalizedFormula.match(/\b(WINDOW_|RUNNING_|LOOKUP|INDEX|RANK)\b/)) {
-            badges.push('`TABLE CALC`');
-          }
-          if (calcClass) {
-            badges.push(`\`${calcClass}\``);
-          }
-
-          const badgeStr = badges.length > 0 ? ' ' + badges.join(' ') : '';
-
-          lines.push(`##### ${name}${badgeStr}`);
-          lines.push('');
-          lines.push(`**Datatype:** ${datatype} | **Role:** ${field.role || 'n/a'}`);
-          lines.push('');
-
-          // Show dependencies with resolved names
-          if (field.references) {
-            if (field.references.fields && field.references.fields.length > 0) {
-              const resolvedFields = field.references.fields.map(f => resolveFieldName(f));
-              lines.push(`**Referenced Fields:** ${resolvedFields.join(', ')}`);
-              lines.push('');
-            }
-            if (field.references.parameters && field.references.parameters.length > 0) {
-              const resolvedParams = field.references.parameters.map(p => resolveFieldName(p));
-              lines.push(`**Referenced Parameters:** ${resolvedParams.join(', ')}`);
-              lines.push('');
-            }
-          }
-
-          if (formula) {
-            lines.push('**Formula:**');
-            lines.push('```tableau');
-            lines.push(formula);
-            lines.push('```');
-            lines.push('');
-          }
-        });
-      }
+      });
 
       lines.push('---');
       lines.push('');
-    });
-  }
-
-  // ===== PARAMETERS =====
-  if (meta.parameters.length) {
-    lines.push('## Parameters');
-    lines.push('');
-    lines.push('| Parameter Name | Datatype | Current Value |');
-    lines.push('|----------------|----------|---------------|');
-
-    meta.parameters.forEach((param) => {
-      const name = param.name || 'Unnamed';
-      const datatype = param.datatype || 'n/a';
-      const value = param.current_value || '—';
-      lines.push(`| ${name} | ${datatype} | ${value} |`);
-    });
-    lines.push('');
-    lines.push('---');
-    lines.push('');
-  }
-
-  // ===== WORKSHEETS =====
-  if (meta.worksheets.length) {
-    lines.push('## Worksheets');
-    lines.push('');
-
-    meta.worksheets.forEach((worksheet) => {
-      const name = worksheet.name || 'Unnamed';
-      const fieldCount = (worksheet.fields_used || []).length;
-
-      lines.push(`### 📈 ${name}`);
-      lines.push('');
-      lines.push(`**Fields Used:** ${fieldCount}`);
-      lines.push('');
-
-      if (fieldCount > 0) {
-        lines.push('<details>');
-        lines.push('<summary>Show fields</summary>');
-        lines.push('');
-        (worksheet.fields_used || []).forEach((field) => {
-          lines.push(`- ${field}`);
-        });
-        lines.push('');
-        lines.push('</details>');
-        lines.push('');
-      }
-    });
-
-    lines.push('---');
-    lines.push('');
-  }
-
-  // ===== DASHBOARDS =====
-  if (meta.dashboards.length) {
-    lines.push('## Dashboards');
-    lines.push('');
-
-    meta.dashboards.forEach((dashboard) => {
-      const name = dashboard.name || 'Unnamed';
-      const worksheetCount = (dashboard.worksheets || []).length;
-
-      lines.push(`### 📊 ${name}`);
-      lines.push('');
-      lines.push(`**Worksheets:** ${worksheetCount}`);
-      lines.push('');
-
-      if (worksheetCount > 0) {
-        (dashboard.worksheets || []).forEach((ws) => {
-          lines.push(`- ${ws}`);
-        });
-        lines.push('');
-      }
-    });
-
-    lines.push('---');
-    lines.push('');
-  }
-
-  // ===== LINEAGE & DEPENDENCIES =====
-  if (meta.lineage.field_to_field.length || meta.lineage.field_to_sheet.length) {
-    lines.push('## Lineage & Dependencies');
-    lines.push('');
-
-    if (meta.lineage.field_to_field.length) {
-      lines.push('### Field → Field Dependencies');
-      lines.push('');
-      lines.push('```mermaid');
-      lines.push('graph LR');
-      meta.lineage.field_to_field.forEach(([from, to]) => {
-        const fromId = from.replace(/[^a-zA-Z0-9]/g, '_');
-        const toId = to.replace(/[^a-zA-Z0-9]/g, '_');
-        lines.push(`  ${fromId}["${from}"] --> ${toId}["${to}"]`);
-      });
-      lines.push('```');
-      lines.push('');
-
-      lines.push('<details>');
-      lines.push('<summary>Show as list</summary>');
-      lines.push('');
-      meta.lineage.field_to_field.forEach(([from, to]) => {
-        lines.push(`- ${from} → ${to}`);
-      });
-      lines.push('');
-      lines.push('</details>');
-      lines.push('');
     }
-
-    if (meta.lineage.field_to_sheet.length) {
-      lines.push('### Field → Worksheet Dependencies');
-      lines.push('');
-      lines.push('<details>');
-      lines.push('<summary>Show dependencies</summary>');
-      lines.push('');
-      meta.lineage.field_to_sheet.forEach(([from, to]) => {
-        lines.push(`- ${from} → ${to}`);
-      });
-      lines.push('');
-      lines.push('</details>');
-      lines.push('');
-    }
-
-    lines.push('---');
-    lines.push('');
   }
 
   // Footer
-  lines.push('');
-  lines.push('---');
-  lines.push(`*Documentation generated by Gem - Tableau Workbook Analyzer*`);
+  lines.push('*Documentation generated by [Gem](https://github.com/jaesto/Gem) - Tableau Workbook Analyzer*');
   lines.push('');
 
   return lines.join('\n');
 }
 
 /**
- * Calculates summary statistics from metadata
+ * Builds a flat name→field lookup from all datasources
  * @param {Object} meta - Workbook metadata
- * @returns {Object} Statistics object
+ * @returns {Object} Map of field name → field object
  * @private
  */
-function calculateStats(meta) {
-  let totalFields = 0;
-  let regularFields = 0;
-  let calculatedFields = 0;
-  let lodCalcs = 0;
-  let tableCalcs = 0;
-
-  meta.datasources.forEach((ds) => {
-    ds.fields.forEach((field) => {
-      totalFields++;
-      if (field.is_calculated) {
-        calculatedFields++;
-        const formula = (field.calculation?.formula || '').toUpperCase();
-        if (formula.match(/\{\s*(FIXED|INCLUDE|EXCLUDE)/)) {
-          lodCalcs++;
-        }
-        if (formula.match(/\b(WINDOW_|RUNNING_|LOOKUP|INDEX|RANK)\b/)) {
-          tableCalcs++;
-        }
-      } else {
-        regularFields++;
+function buildFieldLookup(meta) {
+  const lookup = {};
+  (meta.datasources || []).forEach((ds) => {
+    (ds.fields || []).forEach((field) => {
+      if (field.name) {
+        const clean = field.name.replace(/^\[|\]$/g, '');
+        lookup[clean] = field;
+        lookup[field.name] = field;
       }
     });
   });
-
-  return {
-    datasources: meta.datasources.length,
-    totalFields,
-    regularFields,
-    calculatedFields,
-    lodCalcs,
-    tableCalcs,
-    parameters: meta.parameters.length,
-    worksheets: meta.worksheets.length,
-    dashboards: meta.dashboards.length,
-    dependencies: meta.lineage.field_to_field.length + meta.lineage.field_to_sheet.length,
-  };
+  return lookup;
 }
 
 /**
- * Converts text to URL-safe slug for anchor links
- * @param {string} text - Text to slugify
- * @returns {string} URL-safe slug
+ * Resolves internal field IDs inside a formula string to human-readable names
+ * @param {string} formula - Raw formula text
+ * @returns {string} Formula with IDs replaced by display names
  * @private
  */
-function slugify(text) {
-  return String(text || '')
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, '')
-    .replace(/[\s_-]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+function resolveFormulaNamesInText(formula) {
+  if (!formula) return '';
+  return formula.replace(/\[([^\[\]]+)\]/g, (match, inner) => {
+    const resolved = resolveFieldName(inner);
+    return resolved !== inner ? `[${resolved}]` : match;
+  });
+}
+
+/**
+ * Returns a short flag string for a formula (LOD, Table Calc)
+ * @param {string} formula - Formula text
+ * @returns {string} Flag string
+ * @private
+ */
+function calcFlags(formula) {
+  const upper = (formula || '').toUpperCase();
+  const flags = [];
+  if (upper.match(/\{\s*(FIXED|INCLUDE|EXCLUDE)/)) flags.push('LOD');
+  if (upper.match(/\b(WINDOW_|RUNNING_|LOOKUP|INDEX|RANK)\b/)) flags.push('Table Calc');
+  return flags.join(', ');
 }
 
 /**
