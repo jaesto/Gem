@@ -62,6 +62,39 @@ export function clearDashboardFilter() {
 }
 
 /**
+ * Filters the graph to show nodes in the given set and their direct neighbors.
+ * Used for sidebar multi-select filtering across sheets, calcs, params, and relationships.
+ *
+ * @param {Set<string>} selectedNodeIds - Set of selected node IDs to display
+ */
+export function filterBySidebarSelection(selectedNodeIds) {
+  if (!state.cy) return;
+
+  if (!selectedNodeIds || selectedNodeIds.size === 0) {
+    // Nothing selected — restore full graph with type filters applied
+    state.cy.elements().show();
+    applyFilters({ rerunLayout: false });
+    fitAll(80);
+    return;
+  }
+
+  let combined = state.cy.collection();
+  selectedNodeIds.forEach((nodeId) => {
+    const node = state.cy.getElementById(nodeId);
+    if (node && node.length) {
+      combined = combined.union(node.closedNeighborhood());
+    }
+  });
+
+  state.cy.batch(() => {
+    state.cy.elements().hide();
+    combined.show();
+  });
+
+  fitAll(80);
+}
+
+/**
  * Fits viewport to all visible elements
  * @param {number} pad - Padding around elements
  */

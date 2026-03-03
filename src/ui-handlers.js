@@ -20,7 +20,7 @@ import { parseTwbx, parseTwb, parseTwbText } from './parsers.js';
 import { buildGraph, normalizeGraph, syncGraphLookups } from './graph-builder.js';
 import { applyCyTheme } from './cytoscape-config.js';
 import { setLayoutButton } from './layouts.js';
-import { applyFilters, fitAll, focusOnNode, filterByDashboard, clearDashboardFilter } from './filters.js';
+import { applyFilters, fitAll, focusOnNode, filterByDashboard, clearDashboardFilter, filterBySidebarSelection } from './filters.js';
 import { renderDetails, syncListSelection, populateLists } from './rendering.js';
 
 /**
@@ -356,6 +356,7 @@ export async function handleFiles(fileList) {
       focusOnNode: (id, opts) => focusOnNode(id, opts, { renderDetails, syncListSelection }),
       filterByDashboard,
       clearDashboardFilter,
+      filterBySidebarSelection,
     });
     drawGraph(graph);
     fitAll();

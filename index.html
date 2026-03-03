@@ -114,24 +114,55 @@
 
     <!-- Main layout: sidebar lists, graph canvas, and details panel -->
     <main class="layout" role="main">
-      <!-- Sidebar with drop zone and workbook navigation tabs -->
+      <!-- Sidebar with drop zone and collapsible workbook navigation -->
       <aside class="sidebar">
         <section id="dropZone" class="dropzone" aria-label="Workbook drop zone" tabindex="0">
           <!-- Loader wiring expects this stable ID (see ID invariants in app.js). -->
           <input id="fileInput" type="file" accept=".twb,.twbx" hidden />
           <p>Drop a Tableau .twb or .twbx file here<br />or click Open Workbook.</p>
         </section>
-        <!-- Sidebar tabs allow switching between node, sheet, calc, and parameter lists -->
-        <div class="sidebar-section">
-          <p class="sidebar-label">Dashboards</p>
-          <p class="sidebar-hint">Click to filter graph and export</p>
-          <ul id="list-dashboards" aria-label="Dashboard filter list"></ul>
-          <button id="clearDashboardFilter" class="btn btn-sm" type="button" style="display:none">Show all</button>
-        </div>
-        <div class="sidebar-section">
-          <p class="sidebar-label">Sheets</p>
-          <ul id="list-sheets" aria-label="Sheet list"></ul>
-        </div>
+
+        <!-- Dashboards — single-select filter -->
+        <details class="sidebar-group" id="sidebar-dashboards" open>
+          <summary>Dashboards <span class="sidebar-count" id="dashboards-count"></span></summary>
+          <div class="sidebar-group-body">
+            <p class="sidebar-hint">Click to filter graph</p>
+            <ul id="list-dashboards" aria-label="Dashboard filter list"></ul>
+            <button id="clearDashboardFilter" class="btn btn-sm" type="button" style="display:none">Show all</button>
+          </div>
+        </details>
+
+        <!-- Sheets — multi-select -->
+        <details class="sidebar-group" id="sidebar-sheets">
+          <summary>Sheets <span class="sidebar-count" id="sheets-count"></span></summary>
+          <div class="sidebar-group-body">
+            <ul id="list-sheets" aria-label="Sheet list"></ul>
+          </div>
+        </details>
+
+        <!-- Calculations — multi-select -->
+        <details class="sidebar-group" id="sidebar-calcs">
+          <summary>Calculations <span class="sidebar-count" id="calcs-count"></span></summary>
+          <div class="sidebar-group-body">
+            <ul id="list-calcs" aria-label="Calculations list"></ul>
+          </div>
+        </details>
+
+        <!-- Parameters — multi-select -->
+        <details class="sidebar-group" id="sidebar-params">
+          <summary>Parameters <span class="sidebar-count" id="params-count"></span></summary>
+          <div class="sidebar-group-body">
+            <ul id="list-params" aria-label="Parameters list"></ul>
+          </div>
+        </details>
+
+        <!-- Relationships — multi-select edges -->
+        <details class="sidebar-group" id="sidebar-relationships">
+          <summary>Relationships <span class="sidebar-count" id="relationships-count"></span></summary>
+          <div class="sidebar-group-body">
+            <ul id="list-relationships" aria-label="Relationships list"></ul>
+          </div>
+        </details>
       </aside>
 
       <!-- Cytoscape graph container and status overlay -->
