@@ -329,16 +329,21 @@ export function syncListSelection(nodeId) {
 }
 
 /**
- * Populates sidebar lists for dashboards and sheets
- * Also refreshes the datalist used by the search box
+ * Populates all sidebar lists: dashboards, sheets, calculations, parameters, relationships.
+ * Also refreshes the datalist used by the search box.
  *
  * @param {Object} meta - Parsed metadata object
  * @param {Object} dependencies - External function dependencies
- * @param {Function} dependencies.focusOnNode - Function to focus on node
+ * @param {Function} dependencies.filterByDashboard - Filter graph to a dashboard subgraph
+ * @param {Function} dependencies.clearDashboardFilter - Restore full graph
+ * @param {Function} dependencies.filterBySidebarSelection - Filter graph by selected node IDs
  */
 export function populateLists(meta, dependencies = {}) {
   const dashboardsList = document.getElementById('list-dashboards');
   const sheetsList = document.getElementById('list-sheets');
+  const calcsList = document.getElementById('list-calcs');
+  const paramsList = document.getElementById('list-params');
+  const relationshipsList = document.getElementById('list-relationships');
   const clearBtn = document.getElementById('clearDashboardFilter');
   const datalist = document.getElementById('node-names');
 
@@ -358,9 +363,80 @@ export function populateLists(meta, dependencies = {}) {
 
   dashboardsList.innerHTML = '';
   sheetsList.innerHTML = '';
+  if (calcsList) calcsList.innerHTML = '';
+  if (paramsList) paramsList.innerHTML = '';
+  if (relationshipsList) relationshipsList.innerHTML = '';
   datalist.innerHTML = '';
 
-  // Build dashboard list - clicking filters graph to that dashboard
+  // ── Helpers ─────────────────────────────────────────────────────────────
+
+  /** Updates a count badge element */
+  function setCount(id, n) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = n > 0 ? String(n) : '';
+  }
+
+  /** Reads all currently-active sidebar node selections from the DOM */
+  function getSelectedNodeIds() {
+    const ids = new Set();
+    document.querySelectorAll('.sidebar-item-btn.active[data-node-id]').forEach((btn) => {
+      ids.add(btn.dataset.nodeId);
+    });
+    document.querySelectorAll('.sidebar-item-btn.active[data-source-id]').forEach((btn) => {
+      if (btn.dataset.sourceId) ids.add(btn.dataset.sourceId);
+      if (btn.dataset.targetId) ids.add(btn.dataset.targetId);
+    });
+    return ids;
+  }
+
+  /** Called whenever any multi-select toggle changes */
+  function onSelectionChange() {
+    const ids = getSelectedNodeIds();
+    if (dependencies.filterBySidebarSelection) {
+      dependencies.filterBySidebarSelection(ids);
+    }
+  }
+
+  /**
+   * Creates a toggleable sidebar list item button for multi-select.
+   * @param {string} label - Display text
+   * @param {string|null} nodeId - Graph node ID
+   * @param {Object} [edgeIds] - Optional { sourceId, targetId } for edge items
+   * @param {string} [extraClass] - Extra CSS class
+   */
+  function createToggleItem(label, nodeId, edgeIds = null, extraClass = '') {
+    const li = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.title = label;
+    button.className = 'sidebar-item-btn' + (extraClass ? ' ' + extraClass : '');
+
+    if (nodeId) {
+      button.dataset.nodeId = nodeId;
+    }
+    if (edgeIds) {
+      button.dataset.sourceId = edgeIds.sourceId || '';
+      button.dataset.targetId = edgeIds.targetId || '';
+    }
+
+    if (nodeId || edgeIds) {
+      button.addEventListener('click', () => {
+        const wasActive = button.classList.contains('active');
+        button.classList.toggle('active', !wasActive);
+        button.setAttribute('aria-pressed', wasActive ? 'false' : 'true');
+        onSelectionChange();
+      });
+    } else {
+      button.disabled = true;
+    }
+
+    li.appendChild(button);
+    return li;
+  }
+
+  // ── Dashboards (single-select filter, existing behaviour) ────────────────
+
   const dashboardData = (meta.dashboards || [])
     .filter((db) => db && db.name)
     .map((db) => {
@@ -380,13 +456,11 @@ export function populateLists(meta, dependencies = {}) {
       button.dataset.nodeId = db.nodeId;
       button.dataset.dashboardName = db.name;
       button.addEventListener('click', () => {
-        // Toggle selection
         const isActive = button.classList.contains('active');
         dashboardsList.querySelectorAll('.dashboard-filter-btn').forEach((b) =>
           b.classList.remove('active')
         );
         if (isActive) {
-          // Deselect - clear filter
           state.selectedDashboard = null;
           if (clearBtn) clearBtn.style.display = 'none';
           if (dependencies.clearDashboardFilter) dependencies.clearDashboardFilter();
@@ -404,7 +478,8 @@ export function populateLists(meta, dependencies = {}) {
     dashboardsList.appendChild(li);
   });
 
-  // Wire up "Show all" button
+  setCount('dashboards-count', dashboardData.length);
+
   if (clearBtn) {
     clearBtn.addEventListener('click', () => {
       state.selectedDashboard = null;
@@ -416,7 +491,8 @@ export function populateLists(meta, dependencies = {}) {
     });
   }
 
-  // Build sheets list
+  // ── Sheets (multi-select) ────────────────────────────────────────────────
+
   const worksheetData = (meta.worksheets || [])
     .filter((ws) => ws && ws.name)
     .map((ws) => {
@@ -427,11 +503,81 @@ export function populateLists(meta, dependencies = {}) {
     });
 
   const sheetsCleanup = createVirtualList(sheetsList, worksheetData, (item) =>
-    createListItem(item.name, item.nodeId, dependencies)
+    createToggleItem(item.name, item.nodeId)
   );
   state.virtualLists.set('sheets', sheetsCleanup);
+  setCount('sheets-count', worksheetData.length);
 
-  // Populate search datalist
+  // ── Calculations (multi-select) ──────────────────────────────────────────
+
+  if (calcsList) {
+    const calcData = (state.graph?.nodes || [])
+      .filter((n) => n && n.type === 'CalculatedField')
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      .map((n) => ({ name: n.name || n.id, nodeId: n.id }));
+
+    const calcsCleanup = createVirtualList(calcsList, calcData, (item) =>
+      createToggleItem(item.name, item.nodeId)
+    );
+    state.virtualLists.set('calcs', calcsCleanup);
+    setCount('calcs-count', calcData.length);
+  }
+
+  // ── Parameters (multi-select) ────────────────────────────────────────────
+
+  if (paramsList) {
+    const paramData = (state.graph?.nodes || [])
+      .filter((n) => n && n.type === 'Parameter')
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      .map((n) => ({ name: n.name || n.id, nodeId: n.id }));
+
+    const paramsCleanup = createVirtualList(paramsList, paramData, (item) =>
+      createToggleItem(item.name, item.nodeId)
+    );
+    state.virtualLists.set('params', paramsCleanup);
+    setCount('params-count', paramData.length);
+  }
+
+  // ── Relationships (multi-select edges) ───────────────────────────────────
+
+  if (relationshipsList) {
+    const relData = (state.graph?.edges || [])
+      .filter((e) => e && e.source && e.target)
+      .map((e) => {
+        const srcName = state.idToName.get(e.source) || displayName(e.source) || e.source;
+        const tgtName = state.idToName.get(e.target) || displayName(e.target) || e.target;
+        return {
+          label: `${srcName} → ${tgtName}`,
+          tooltip: e.rel ? `${srcName} → ${tgtName} (${e.rel})` : `${srcName} → ${tgtName}`,
+          sourceId: e.source,
+          targetId: e.target,
+        };
+      });
+
+    const relCleanup = createVirtualList(relationshipsList, relData, (item) => {
+      const li = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = item.label;
+      button.title = item.tooltip;
+      button.className = 'sidebar-item-btn sidebar-item-rel';
+      button.dataset.sourceId = item.sourceId;
+      button.dataset.targetId = item.targetId;
+      button.addEventListener('click', () => {
+        const wasActive = button.classList.contains('active');
+        button.classList.toggle('active', !wasActive);
+        button.setAttribute('aria-pressed', wasActive ? 'false' : 'true');
+        onSelectionChange();
+      });
+      li.appendChild(button);
+      return li;
+    });
+    state.virtualLists.set('relationships', relCleanup);
+    setCount('relationships-count', relData.length);
+  }
+
+  // ── Search datalist ──────────────────────────────────────────────────────
+
   const seenValues = new Set();
   (state.graph?.nodes || []).forEach((node) => {
     if (node && node.name && !seenValues.has(node.name)) {
@@ -442,5 +588,9 @@ export function populateLists(meta, dependencies = {}) {
     }
   });
 
-  logger.info('[populateLists]', `Listed ${dashboardData.length} dashboards, ${worksheetData.length} sheets`);
+  logger.info(
+    '[populateLists]',
+    `Listed ${dashboardData.length} dashboards, ${worksheetData.length} sheets,`,
+    `${calcsList?.children.length ?? 0} calcs, ${paramsList?.children.length ?? 0} params`
+  );
 }

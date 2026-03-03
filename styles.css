@@ -566,38 +566,144 @@ summary::-webkit-details-marker {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Sidebar section labels and dashboard filter list                           */
+/* Sidebar collapsible groups (details/summary)                               */
 /* -------------------------------------------------------------------------- */
 
-.sidebar-section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.sidebar-group {
+  border: 1px solid var(--gem-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  flex-shrink: 0;
 }
 
-.sidebar-label {
+/* Override the global summary pill style for sidebar groups */
+.sidebar-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
   font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--gem-muted);
-  margin: 0;
+  background: var(--gem-surface-2);
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  width: 100%;
+  cursor: pointer;
+  transition: color var(--trans), background var(--trans);
+}
+
+.sidebar-group > summary::after {
+  content: '›';
+  font-size: 1rem;
+  margin-left: auto;
+  display: inline-block;
+  transform: rotate(0deg);
+  transition: transform var(--trans);
+  color: var(--gem-muted);
+}
+
+.sidebar-group[open] > summary::after {
+  transform: rotate(90deg);
+}
+
+.sidebar-group > summary:hover {
+  color: var(--gem-text);
+  background: rgba(139, 92, 246, 0.06);
+  box-shadow: none;
+  transform: none;
+}
+
+.sidebar-group > summary:focus-visible {
+  outline: 2px solid var(--gem-primary);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
+.sidebar-group-body {
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .sidebar-hint {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   color: var(--gem-muted);
   opacity: 0.7;
-  margin: 0;
+  margin: 2px 4px 2px;
+  padding: 0;
 }
 
-.sidebar-section ul {
+.sidebar-group ul {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.sidebar-count {
+  background: var(--gem-surface);
+  border: 1px solid var(--gem-border);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--gem-muted);
+  min-width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* Toggle-able sidebar item buttons (multi-select) */
+.sidebar-item-btn {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--gem-text);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background var(--trans), border-color var(--trans);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-item-btn:hover {
+  background: rgba(139, 92, 246, 0.08);
+  border-color: transparent;
+}
+
+.sidebar-item-btn.active {
+  background: linear-gradient(180deg, rgba(139, 92, 246, 0.22), rgba(139, 92, 246, 0.09));
+  border-color: rgba(139, 92, 246, 0.45);
+  color: var(--gem-text);
+}
+
+.sidebar-item-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--gem-glow);
+}
+
+/* Relationship items show arrows, slightly smaller text */
+.sidebar-item-rel {
+  font-size: 0.78rem;
+  color: var(--gem-muted);
+}
+
+.sidebar-item-rel:hover,
+.sidebar-item-rel.active {
+  color: var(--gem-text);
 }
 
 .dashboard-filter-btn {
