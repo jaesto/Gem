@@ -13,7 +13,6 @@ import { NAME_NORMALIZER } from './constants.js';
 import { state } from './state.js';
 import { logger } from './logger.js';
 import { escapeHtml, displayName, normalizeName } from './utils.js';
-import { highlightFormula } from './syntax-highlighter.js';
 import { createVirtualList } from './virtual-list.js';
 
 /**
@@ -238,11 +237,11 @@ export function renderDetails(nodeData) {
 
   panel.innerHTML = lines.join('');
 
-  // Apply syntax highlighting to formula after HTML is rendered
+  // Fill formula area with plain text (textContent avoids HTML-rendering issues)
   if (formulaInfo) {
     const formulaEl = panel.querySelector('.formula');
     if (formulaEl) {
-      formulaEl.innerHTML = highlightFormula(formulaInfo.text);
+      formulaEl.textContent = resolveFormulaText(formulaInfo.text);
     }
     const headingEl = panel.querySelector('.formula-heading');
     if (headingEl) {
@@ -260,6 +259,36 @@ export function renderDetails(nodeData) {
       }
     }
   }
+}
+
+/**
+ * Resolves internal field IDs in a formula to human-readable names.
+ * Outputs plain text suitable for textContent assignment (no HTML).
+ *
+ * @param {string} formula - Raw formula text
+ * @returns {string} Formula with internal IDs replaced by display names
+ * @private
+ */
+function resolveFormulaText(formula) {
+  if (!formula) return '';
+  return formula.replace(/\[([^\[\]]+)\]/g, (match, inner) => {
+    const fromMap =
+      state.idToName?.get(inner) ||
+      state.idToName?.get(`[${inner}]`);
+    if (fromMap) {
+      return `[${fromMap.replace(/^\[|\]$/g, '')}]`;
+    }
+    if (inner.startsWith('Calculation_') || inner.startsWith('Parameter_')) {
+      if (state.nodeIndex) {
+        for (const node of state.nodeIndex.values()) {
+          if (node.rawId === inner || node.originalId === inner) {
+            return `[${node.name}]`;
+          }
+        }
+      }
+    }
+    return match;
+  });
 }
 
 /**
